@@ -1,6 +1,6 @@
 # ARIA — Autonomous Reflective Intelligence Agent
 
-AI agent with self-improvement, compressed memory, and an OpenClaw-style skill system. Runs locally with Ollama.
+AI agent with self-improvement, compressed memory, and an OpenClaw-style skill system. Runs locally with Ollama. Vibecoded with Claude Opus 4.6 and tested with codegemma:latest
 
 ## Architecture
 
@@ -268,4 +268,5 @@ Architecture inspired by [OpenClaw](https://openclaw.ai/):
 - SKILL.md-based skill system (AgentSkills format)
 - Local command and script execution
 - Persistent memory across sessions
+
 - Modular, extensible architecture
