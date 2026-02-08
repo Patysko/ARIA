@@ -20,7 +20,7 @@ services:
     environment:
       - ARIA_MODEL=${ARIA_MODEL:-codegemma:latest}
       - ARIA_MODE=external
-      - ARIA_LANG=${ARIA_LANG:-pl}
+      - ARIA_LANG=${ARIA_LANG:-en}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
     volumes:
       # Persist memory and skills between runs

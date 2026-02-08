@@ -184,63 +184,68 @@ class AriaWebAgent:
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_status(self) -> dict:
+        L = UI[get_lang()]
         s = self.get_status()
         sm = s["self_model"]
         conn = "OK" if s["llm_connected"] else "OFFLINE"
-        t2 = "aktywny" if s["thread2_running"] else "stop"
+        t2 = L["status_t2_active"] if s["thread2_running"] else L["status_t2_stop"]
         return {"type": "command", "content": (
             f"**ARIA v{s['version']}**\n"
             f"LLM: `{s['llm_model']}` {conn} @ `{s['llm_url']}`\n"
-            f"Thread 2: {t2} | cykli: {s['thread2_cycles']}\n"
-            f"Pamiec: ST={s['memory']['short_term_count']} LT={s['memory']['long_term_count']} EP={s['memory']['episodic_count']}\n"
-            f"Kompresje: {s['memory']['compression_count']} | Umiejetnosci: {s['skills_count']}\n"
-            f"Interakcje: {s['interactions']} | Uptime: {s['uptime']}s"
+            f"Thread 2: {t2} | {L['status_cycles']}: {s['thread2_cycles']}\n"
+            f"{L['status_memory']}: ST={s['memory']['short_term_count']} LT={s['memory']['long_term_count']} EP={s['memory']['episodic_count']}\n"
+            f"{L['status_compressions']}: {s['memory']['compression_count']} | {L['status_skills']}: {s['skills_count']}\n"
+            f"{L['status_interactions']}: {s['interactions']} | {L['status_uptime']}: {s['uptime']}s"
         )}
 
     def _cmd_memory(self) -> dict:
+        L = UI[get_lang()]
         d = self.get_memory_dump()
-        lines = [f"**Pamiec** ST:{len(d['short_term'])} LT:{len(d['long_term'])}\n"]
-        lines.append("**Krotkoterminowa:**")
+        lines = [f"{L['memory_title']} ST:{len(d['short_term'])} LT:{len(d['long_term'])}\n"]
+        lines.append(L["memory_st"])
         for e in d["short_term"][-10:]:
             imp = "*" * round(e["importance"] * 5)
             lines.append(f"  `[{e['category']}]` {imp} {e['content'][:80]}")
         if d["long_term"]:
-            lines.append("\n**Skompresowana:**")
+            lines.append(f"\n{L['memory_lt']}")
             for e in d["long_term"][-5:]:
                 lines.append(f"  `[{e['category']}]` ({e['source_count']}src) {e['summary'][:80]}")
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_recall(self, query) -> dict:
+        L = UI[get_lang()]
         if not query:
-            return {"type": "error", "content": "Uzycie: `/recall <zapytanie>`"}
+            return {"type": "error", "content": L["recall_usage"]}
         results = self.memory.recall(query)
-        lines = [f"**Wyniki: \"{query}\"**\n"]
-        for label, key in [("Krotkoterminowa", "short_term"), ("Dlugoterminowa", "long_term")]:
+        lines = [L["results_title"].format(q=query)]
+        for label, key in [(L["recall_st"], "short_term"), (L["recall_lt"], "long_term")]:
             if results[key]:
-                lines.append(f"**{label}:**")
+                lines.append(f"{label}")
                 for score, entry in results[key]:
                     c = entry.get("content", entry.get("summary", ""))
                     lines.append(f"  [{score:.1f}] {c[:100]}")
         if not results["short_term"] and not results["long_term"]:
-            lines.append("Brak wynikow.")
+            lines.append(L["no_results"])
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_skills(self) -> dict:
+        L = UI[get_lang()]
         skills = self.skills.list_all()
         if not skills:
-            return {"type": "command", "content": "Brak umiejetnosci. Thread 2 stworzy je automatycznie."}
-        lines = [f"**Umiejetnosci ({len(skills)})**\n"]
+            return {"type": "command", "content": L["skills_empty"]}
+        lines = [L["skills_title"].format(n=len(skills))]
         for s in skills:
-            scripts = ", ".join(s.get("scripts", [])) or "brak"
-            lines.append(f"* **{s['name']}** [{s['use_count']}x] -- {s['description'][:60]}\n  Skrypty: `{scripts}`")
+            scripts = ", ".join(s.get("scripts", [])) or L["skill_none"]
+            lines.append(f"* **{s['name']}** [{s['use_count']}x] -- {s['description'][:60]}\n  {L['skill_scripts']}: `{scripts}`")
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_skill_detail(self, name) -> dict:
+        L = UI[get_lang()]
         if not name:
-            return {"type": "error", "content": "Uzycie: `/skill <nazwa>`"}
+            return {"type": "error", "content": L["skill_usage"]}
         skill = self.skills.get(name)
         if not skill:
-            return {"type": "error", "content": f"Nie znaleziono: \"{name}\"\nDostepne: {', '.join(self.skills.list_names())}"}
+            return {"type": "error", "content": L["skill_not_found"].format(name=name, avail=', '.join(self.skills.list_names()))}
         scripts = skill.get_scripts()
         code_preview = ""
         for s in scripts:
@@ -252,23 +257,24 @@ class AriaWebAgent:
                 break
         return {"type": "command", "content": (
             f"**{skill.name}**\n{skill.description}\n\n"
-            f"Skrypty: {', '.join(s.name for s in scripts) or 'brak'} | Uzycia: {skill.use_count}\n\n"
-            f"**Instrukcje:**\n{skill.instructions[:500]}"
+            f"{L['skill_scripts']}: {', '.join(s.name for s in scripts) or L['skill_none']} | {L['skill_uses']}: {skill.use_count}\n\n"
+            f"**{L['skill_instructions']}:**\n{skill.instructions[:500]}"
             f"{code_preview}"
         )}
 
     def _cmd_run(self, arg) -> dict:
+        L = UI[get_lang()]
         if not arg:
-            return {"type": "error", "content": "Uzycie: `/run <skill> [argumenty]`\nDostepne: " + ", ".join(self.skills.list_names())}
+            return {"type": "error", "content": L["run_usage"].format(avail=", ".join(self.skills.list_names()))}
         parts = arg.split(maxsplit=1)
         name = parts[0]
         args = parts[1].split() if len(parts) > 1 else []
         skill = self.skills.get(name)
         if not skill:
-            return {"type": "error", "content": f"Nie znaleziono: \"{name}\""}
+            return {"type": "error", "content": L["skill_not_found"].format(name=name, avail=', '.join(self.skills.list_names()))}
         scripts = [s for s in skill.get_scripts() if s.suffix == ".py"]
         if not scripts:
-            return {"type": "error", "content": f"{name} nie ma skryptow Python"}
+            return {"type": "error", "content": L["no_py_scripts"].format(name=name)}
         result = skill.run_script(scripts[0].name, args=args)
         if result.get("returncode", 1) == 0:
             return {"type": "command", "content": f"**OK {name}/{scripts[0].name}** (exit 0)\n```\n{result.get('stdout','')[:2000]}\n```",
@@ -278,57 +284,58 @@ class AriaWebAgent:
             return {"type": "error", "content": f"**FAIL {name}/{scripts[0].name}** (exit {result.get('returncode','?')})\n```\n{err[:1000]}\n```"}
 
     def _cmd_create_skill(self, arg) -> dict:
+        L = UI[get_lang()]
         if not arg:
-            return {"type": "error", "content": (
-                "Uzycie: `/create-skill {json}`\n"
-                'Przyklad: /create-skill {"name": "hello-world", "description": "Test", '
-                '"instructions": "Prints hello", "script_code": "print(\'Hello!\')"}'
-            )}
+            return {"type": "error", "content": L["create_skill_usage"]}
         try:
             data = json.loads(arg)
             name = data.get("name", "")
             desc = data.get("description", "")
             if not name or not desc:
-                return {"type": "error", "content": "JSON musi zawierac `name` i `description`"}
+                return {"type": "error", "content": L["create_need_fields"]}
             scripts = {}
             if data.get("script_code"):
                 scripts[data.get("script_name", "main.py")] = data["script_code"]
             skill = self.skills.create_skill(name, desc, data.get("instructions", desc), scripts=scripts)
-            return {"type": "command", "content": f"OK Stworzono umiejetnosc: **{skill.name}**\nOpis: {desc}"}
+            return {"type": "command", "content": L["created_skill"].format(name=skill.name, desc=desc)}
         except json.JSONDecodeError as e:
-            return {"type": "error", "content": f"Niepoprawny JSON: {e}"}
+            return {"type": "error", "content": f"Invalid JSON: {e}"}
 
     def _cmd_thread2(self, arg) -> dict:
+        L = UI[get_lang()]
         n = int(arg) if arg and arg.isdigit() else 5
         refs = self.reflection.get_last_reflections(n)
         running = self.reflection.is_running
+        t2_st = L["thread2_active"] if running else L["thread2_stop"]
         lines = [
-            f"**Thread 2** {'aktywny' if running else 'stop'} | "
-            f"Cykli: {self.reflection._cycle_count} | Interwal: {self.reflection.interval}s\n"
+            f"{L['thread2_title']} {t2_st} | "
+            f"{L['status_cycles']}: {self.reflection._cycle_count} | {L['t2_interval']}: {self.reflection.interval}s\n"
         ]
         if refs:
             for ref in reversed(refs):
                 phase = ref.get("phase", "?")
                 cycle = ref.get("cycle", "?")
                 ts = time.strftime("%H:%M:%S", time.localtime(ref["timestamp"]))
-                lines.append(f"**Cykl {cycle}** | `{phase}` | {ts}")
+                lines.append(f"**Cycle {cycle}** | `{phase}` | {ts}")
                 for t in ref.get("thoughts", [])[:4]:
                     lines.append(f"  {t[:150]}")
                 lines.append("")
         else:
-            lines.append("Brak refleksji -- poczekaj chwile.")
+            lines.append(L["no_reflections"])
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_reflect(self) -> dict:
+        L = UI[get_lang()]
         thoughts = self.reflection.reflect(trigger="manual")
-        lines = ["**Refleksja (wymuszona)**\n"]
+        lines = [L["reflect_title"]]
         for t in thoughts:
             lines.append(f"  {t[:200]}")
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_exec(self, cmd) -> dict:
+        L = UI[get_lang()]
         if not cmd:
-            return {"type": "error", "content": "Uzycie: `/exec <komenda>`"}
+            return {"type": "error", "content": L["exec_usage"]}
         r = self.computer.execute(cmd)
         output = ""
         if r.get("stdout"): output += r["stdout"][:3000]
@@ -338,8 +345,9 @@ class AriaWebAgent:
         return {"type": "command", "content": f"**`{cmd}`** (exit {code})\n```\n{output.strip()}\n```"}
 
     def _cmd_python(self, code) -> dict:
+        L = UI[get_lang()]
         if not code:
-            return {"type": "error", "content": "Uzycie: `/python <kod>`"}
+            return {"type": "error", "content": L["python_usage"]}
         r = self.computer.run_python(code)
         output = r.get("stdout", "") or r.get("error", "") or r.get("stderr", "")
         return {"type": "command", "content": f"**Python**\n```\n{output[:3000].strip()}\n```"}
@@ -356,39 +364,44 @@ class AriaWebAgent:
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_read(self, path) -> dict:
+        L = UI[get_lang()]
         if not path:
-            return {"type": "error", "content": "Uzycie: `/read <sciezka>`"}
+            return {"type": "error", "content": L["read_usage"]}
         r = self.computer.read_file(path)
         if "error" in r:
             return {"type": "error", "content": r["error"]}
         return {"type": "command", "content": f"**{r['path']}** ({r['size']}B)\n```\n{r['content'][:4000]}\n```"}
 
     def _cmd_write(self, arg) -> dict:
+        L = UI[get_lang()]
         if not arg:
-            return {"type": "error", "content": "Uzycie: `/write <sciezka> <tresc>`"}
+            return {"type": "error", "content": L["write_usage"]}
         parts = arg.split(maxsplit=1)
         if len(parts) < 2:
-            return {"type": "error", "content": "Uzycie: `/write <sciezka> <tresc>`"}
+            return {"type": "error", "content": L["write_usage"]}
         path, content = parts
         r = self.computer.write_file(path, content)
         if r.get("success"):
-            return {"type": "command", "content": f"OK Zapisano {r['size']}B do `{r['path']}`"}
-        return {"type": "error", "content": r.get("error", "Blad zapisu")}
+            return {"type": "command", "content": L["written"].format(size=r['size'], path=r['path'])}
+        return {"type": "error", "content": r.get("error", L["write_error"])}
 
     def _cmd_sysinfo(self) -> dict:
+        L = UI[get_lang()]
         info = self.computer.system_info()
-        lines = ["**System**\n"]
+        lines = [L["system_title"]]
         for k, v in info.items():
             lines.append(f"  `{k}`: {v}")
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_compress(self) -> dict:
+        L = UI[get_lang()]
         r = self.memory.compress()
-        return {"type": "command", "content": f"Skompresowano {r['compressed']} -> {r['blocks_created']} blokow"}
+        return {"type": "command", "content": L["compressed"].format(n=r['compressed'], b=r['blocks_created'])}
 
     def _cmd_selfmodel(self) -> dict:
+        L = UI[get_lang()]
         m = self.reflection.self_model
-        lines = ["**Model Wlasny**\n"]
+        lines = [L["selfmodel_title"]]
         for k, v in m.items():
             if isinstance(v, list):
                 v = ", ".join(str(x) for x in v[:5])
@@ -396,33 +409,34 @@ class AriaWebAgent:
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_models(self) -> dict:
+        L = UI[get_lang()]
         models = self.llm.list_models()
         if not models:
-            return {"type": "error", "content": "Nie mozna pobrac listy modeli. Ollama dostepna?"}
+            return {"type": "error", "content": L["models_error"]}
         current = self.llm.model
-        lines = [f"**Modele Ollama ({len(models)})**\n"]
+        lines = [L["models_title"].format(n=len(models))]
         for m in models:
-            marker = " <-- aktywny" if m == current else ""
+            marker = f" <-- {L['models_active']}" if m == current else ""
             lines.append(f"  * `{m}`{marker}")
-        lines.append(f"\nZmien model: `/model <nazwa>`")
+        lines.append(f"\n{L['models_change']}")
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_model(self, name) -> dict:
         """Switch model. Auto-pulls if not available locally."""
+        L = UI[get_lang()]
         if not name:
-            return {"type": "error", "content": f"Uzycie: `/model <nazwa>`\nAktywny: `{self.llm.model}`\nDostepne: `/models`"}
+            return {"type": "error", "content": L["model_usage"].format(model=self.llm.model)}
 
         old = self.llm.model
         lines = []
 
-        # Check if model is available, pull if not
         if not self.llm.is_model_available(name):
-            lines.append(f"Model `{name}` nie znaleziony lokalnie. Pobieram...")
+            lines.append(L["pulling"].format(m=name))
             try:
                 for progress in self.llm.pull_model(name):
                     lines.append(progress.strip())
             except Exception as e:
-                lines.append(f"Blad pobierania: {e}")
+                lines.append(L["pull_error"].format(e=e))
                 return {"type": "error", "content": "\n".join(lines)}
 
         self.llm.model = name
@@ -436,7 +450,7 @@ class AriaWebAgent:
             self.reflection.on_thought = self._broadcast_thought
             self.reflection.on_user_message = self._queue_user_message
             self.reflection.start_background(llm_client=self.reflection_llm, interval=30)
-            lines.append("Thread 2 uruchomiony!")
+            lines.append(L["t2_started"])
 
         try:
             data = json.loads(self.config.CONFIG_FILE.read_text())
@@ -446,22 +460,24 @@ class AriaWebAgent:
         except Exception:
             pass
 
-        lines.append(f"OK Model zmieniony: `{old}` -> **`{name}`**\nHistoria czatu wyczyszczona.")
+        lines.append(L["model_changed"].format(old=old, new=name))
         return {"type": "command", "content": "\n".join(lines)}
 
     def _cmd_ollama(self) -> dict:
+        L = UI[get_lang()]
         status = self.llm.check_connection()
         self.llm_connected = status.get("connected", False)
         if status["connected"]:
+            model_st = L["ollama_model_ok"] if status["model_available"] else L["ollama_model_missing"]
             return {"type": "command", "content": (
-                f"**Ollama** OK\n"
-                f"URL: `{status['url']}`\n"
-                f"Model: `{status['current_model']}` {'OK' if status['model_available'] else 'NIE ZNALEZIONY'}\n"
-                f"Modele: {', '.join(status['models'][:10])}"
+                f"{L['ollama_ok']}\n"
+                f"{L['ollama_url']}: `{status['url']}`\n"
+                f"{L['ollama_model']}: `{status['current_model']}` {model_st}\n"
+                f"{L['ollama_models']}: {', '.join(status['models'][:10])}"
             )}
         return {"type": "error", "content": (
-            f"**Ollama** OFFLINE - Brak polaczenia z `{status['url']}`\n"
-            f"Uruchom: `ollama serve`"
+            f"{L['ollama_fail'].format(url=status['url'])}\n"
+            f"{L['ollama_run']}"
         )}
 
     # =========================================
@@ -487,19 +503,22 @@ class AriaWebAgent:
         thinking_steps = []
         skill_results = {}
         skills_used = []
+        L = UI[get_lang()]
 
         # -- Step 1: Analyze query (LLM call #1) --
         analysis = self._cot_step_analyze(message)
-        thinking_steps.append(("Analiza", analysis))
+        thinking_steps.append((L["cot_analysis"], analysis))
 
         # -- Step 2: Recall relevant memory (exclude Thread 2 data) --
+        from core.prompts import MEM
+        no_mem = MEM.get(get_lang(), MEM["en"])["no_relevant"]
         memory_ctx = self.memory.get_relevant_context(
             message,
             max_tokens=min(800, self.llm.get_available_context() // 4),
             exclude_sources=["thread2"],
         )
-        if memory_ctx and memory_ctx != "(brak powiazanych wspomnien)":
-            thinking_steps.append(("Pamiec", memory_ctx))
+        if memory_ctx and memory_ctx != no_mem:
+            thinking_steps.append((L["cot_memory"], memory_ctx))
 
         # -- Step 3: Find and run relevant skills --
         all_relevant = self.skills.find_relevant(message)
@@ -514,24 +533,24 @@ class AriaWebAgent:
                         skill_results[skill.name] = output
                         skills_used.append(skill.name)
                         thinking_steps.append((
-                            f"Skill: {skill.name}",
-                            f"args={args}\nWynik: {output[:500]}"
+                            f"{L['cot_skill']}: {skill.name}",
+                            f"args={args}\nOutput: {output[:500]}"
                         ))
                     elif result.get("stderr") or result.get("error"):
                         err = result.get("stderr", result.get("error", ""))[:200]
                         thinking_steps.append((
-                            f"Skill ERROR: {skill.name}",
-                            f"Blad (args={args}): {err}"
+                            f"{L['cot_skill']} ERROR: {skill.name}",
+                            f"Error (args={args}): {err}"
                         ))
 
         # -- Step 4: Plan response (LLM call #2) --
         plan = self._cot_step_plan(message, analysis, thinking_steps, skill_results)
-        thinking_steps.append(("Plan", plan))
+        thinking_steps.append((L["cot_plan"], plan))
 
         # -- Step 5: Optional additional reasoning --
         needs_more = self._cot_step_needs_more(message, plan, skill_results)
         if needs_more:
-            thinking_steps.append(("Dodatkowe", needs_more))
+            thinking_steps.append((L["cot_interpret"], needs_more))
 
         # -- Final: Generate answer (LLM call #3+) --
         reply = self._cot_step_final_answer(message, thinking_steps, skill_results, memory_ctx)
@@ -948,22 +967,27 @@ def main():
     port = int(os.environ.get("ARIA_PORT", 8080))
     config = Config()
     agent = AriaWebAgent(config)
+    lang = get_lang()
 
-    print(f"\n  ARIA WebUI starting...")
+    print(f"\n  ARIA WebUI starting... (lang={lang})")
     status = agent.initialize()
     if status.get("connected"):
         print(f"  Ollama: {agent.llm.model} @ {agent.llm.base_url}")
-        print(f"  Thread 2: AKTYWNY (co {agent.reflection.interval}s)")
+        t2_msg = f"Thread 2: ACTIVE (every {agent.reflection.interval}s)" if lang == "en" else f"Thread 2: AKTYWNY (co {agent.reflection.interval}s)"
+        print(f"  {t2_msg}")
     else:
-        print(f"  Ollama niedostepna - tryb offline")
+        offline_msg = "Ollama unavailable - offline mode" if lang == "en" else "Ollama niedostepna - tryb offline"
+        print(f"  {offline_msg}")
     print(f"  http://localhost:{port}")
-    print(f"  Ctrl+C aby zatrzymac\n")
+    stop_msg = "Ctrl+C to stop" if lang == "en" else "Ctrl+C aby zatrzymac"
+    print(f"  {stop_msg}\n")
 
     server = ThreadedHTTPServer(("0.0.0.0", port), AriaHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n  Zatrzymuje...")
+        stop = "Stopping..." if lang == "en" else "Zatrzymuje..."
+        print(f"\n  {stop}")
         agent.shutdown()
         server.server_close()
 

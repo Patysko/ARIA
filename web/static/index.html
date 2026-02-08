@@ -101,30 +101,150 @@ const api = {
   },
 };
 
-// ─── Commands list ───
-const COMMANDS = [
-  { cmd: '/help', desc: 'Lista komend', args: '' },
-  { cmd: '/status', desc: 'Status agenta + Thread 2', args: '' },
-  { cmd: '/memory', desc: 'Podgląd pamięci', args: '' },
-  { cmd: '/recall', desc: 'Przeszukaj pamięć', args: '<zapytanie>' },
-  { cmd: '/skills', desc: 'Lista umiejętności', args: '' },
-  { cmd: '/skill', desc: 'Szczegóły umiejętności', args: '<nazwa>' },
-  { cmd: '/run', desc: 'Uruchom skrypt skilla', args: '<skill> [args]' },
-  { cmd: '/create-skill', desc: 'Stwórz skill z JSON', args: '{json}' },
-  { cmd: '/thread2', desc: 'Ostatnie cykle Thread 2', args: '[n]' },
-  { cmd: '/reflect', desc: 'Wymuś cykl refleksji', args: '' },
-  { cmd: '/exec', desc: 'Wykonaj komendę shell', args: '<cmd>' },
-  { cmd: '/python', desc: 'Wykonaj kod Python', args: '<code>' },
-  { cmd: '/ls', desc: 'Listuj pliki', args: '[path]' },
-  { cmd: '/read', desc: 'Czytaj plik', args: '<path>' },
-  { cmd: '/write', desc: 'Zapisz do pliku', args: '<path> <treść>' },
-  { cmd: '/sysinfo', desc: 'Informacje o systemie', args: '' },
-  { cmd: '/compress', desc: 'Wymuś kompresję pamięci', args: '' },
-  { cmd: '/selfmodel', desc: 'Model własny agenta', args: '' },
-  { cmd: '/models', desc: 'Lista modeli Ollama', args: '' },
-  { cmd: '/model', desc: 'Zmień model (auto-pull)', args: '<nazwa>' },
-  { cmd: '/ollama', desc: 'Status połączenia Ollama', args: '' },
-];
+// ─── i18n Translations ───
+const TRANSLATIONS = {
+  pl: {
+    send: 'Wyślij',
+    placeholder: 'Napisz wiadomość lub / aby zobaczyć komendy…',
+    reflectionBtn: '🔄 Refleksja',
+    statusBtn: '📊 Status',
+    refreshBtn: '🔃 Odśwież',
+    tabThread2: 'Thread 2',
+    tabStatus: 'Status',
+    tabSkills: 'Skille',
+    tabMemory: 'Pamięć',
+    tabTimeline: 'Historia',
+    waitingThoughts: 'Oczekiwanie na myśli Thread 2…',
+    loading: 'Ładowanie…',
+    version: 'Wersja',
+    model: 'Model',
+    llm: 'LLM',
+    thread2: 'Thread 2',
+    cycles: 'Cykle',
+    interactions: 'Interakcje',
+    memoryStat: 'Pamięć ST / LT',
+    skills: 'Umiejętności',
+    uptime: 'Uptime',
+    active: 'Aktywny',
+    stopped: 'Stop',
+    online: 'Online',
+    offline: 'Offline',
+    noSkills: 'Brak umiejętności — Thread 2 stworzy je automatycznie.',
+    uses: 'Użycia',
+    scripts: 'Skrypty',
+    none: 'brak',
+    run: '▶ Uruchom',
+    details: 'Szczegóły',
+    shortTerm: 'Krótkoterminowa',
+    compressed: 'Skompresowana',
+    compressions: 'Kompresje',
+    noReflections: 'Brak refleksji.',
+    cycle: 'Cykl',
+    showThinking: '🧠 ▸ Pokaż tok myślenia',
+    hideThinking: '🧠 ▾ Ukryj tok myślenia',
+  },
+  en: {
+    send: 'Send',
+    placeholder: 'Type a message or / to see commands…',
+    reflectionBtn: '🔄 Reflect',
+    statusBtn: '📊 Status',
+    refreshBtn: '🔃 Refresh',
+    tabThread2: 'Thread 2',
+    tabStatus: 'Status',
+    tabSkills: 'Skills',
+    tabMemory: 'Memory',
+    tabTimeline: 'Timeline',
+    waitingThoughts: 'Waiting for Thread 2 thoughts…',
+    loading: 'Loading…',
+    version: 'Version',
+    model: 'Model',
+    llm: 'LLM',
+    thread2: 'Thread 2',
+    cycles: 'Cycles',
+    interactions: 'Interactions',
+    memoryStat: 'Memory ST / LT',
+    skills: 'Skills',
+    uptime: 'Uptime',
+    active: 'Active',
+    stopped: 'Stopped',
+    online: 'Online',
+    offline: 'Offline',
+    noSkills: 'No skills yet — Thread 2 will create them automatically.',
+    uses: 'Uses',
+    scripts: 'Scripts',
+    none: 'none',
+    run: '▶ Run',
+    details: 'Details',
+    shortTerm: 'Short-term',
+    compressed: 'Compressed',
+    compressions: 'Compressions',
+    noReflections: 'No reflections.',
+    cycle: 'Cycle',
+    showThinking: '🧠 ▸ Show thinking',
+    hideThinking: '🧠 ▾ Hide thinking',
+  },
+};
+
+function useT(status) {
+  const lang = (status && status.language) || 'pl';
+  window.__ariaLang = lang;  // make available to all components
+  return TRANSLATIONS[lang] || TRANSLATIONS['en'];
+}
+
+function getT() {
+  const lang = window.__ariaLang || 'pl';
+  return TRANSLATIONS[lang] || TRANSLATIONS['en'];
+}
+
+// ─── Commands list (bilingual) ───
+const COMMANDS_I18N = {
+  pl: [
+    { cmd: '/help', desc: 'Lista komend', args: '' },
+    { cmd: '/status', desc: 'Status agenta + Thread 2', args: '' },
+    { cmd: '/memory', desc: 'Podgląd pamięci', args: '' },
+    { cmd: '/recall', desc: 'Przeszukaj pamięć', args: '<zapytanie>' },
+    { cmd: '/skills', desc: 'Lista umiejętności', args: '' },
+    { cmd: '/skill', desc: 'Szczegóły umiejętności', args: '<nazwa>' },
+    { cmd: '/run', desc: 'Uruchom skrypt skilla', args: '<skill> [args]' },
+    { cmd: '/create-skill', desc: 'Stwórz skill z JSON', args: '{json}' },
+    { cmd: '/thread2', desc: 'Ostatnie cykle Thread 2', args: '[n]' },
+    { cmd: '/reflect', desc: 'Wymuś cykl refleksji', args: '' },
+    { cmd: '/exec', desc: 'Wykonaj komendę shell', args: '<cmd>' },
+    { cmd: '/python', desc: 'Wykonaj kod Python', args: '<code>' },
+    { cmd: '/ls', desc: 'Listuj pliki', args: '[path]' },
+    { cmd: '/read', desc: 'Czytaj plik', args: '<path>' },
+    { cmd: '/write', desc: 'Zapisz do pliku', args: '<path> <treść>' },
+    { cmd: '/sysinfo', desc: 'Informacje o systemie', args: '' },
+    { cmd: '/compress', desc: 'Wymuś kompresję pamięci', args: '' },
+    { cmd: '/selfmodel', desc: 'Model własny agenta', args: '' },
+    { cmd: '/models', desc: 'Lista modeli Ollama', args: '' },
+    { cmd: '/model', desc: 'Zmień model (auto-pull)', args: '<nazwa>' },
+    { cmd: '/ollama', desc: 'Status połączenia Ollama', args: '' },
+  ],
+  en: [
+    { cmd: '/help', desc: 'List commands', args: '' },
+    { cmd: '/status', desc: 'Agent status + Thread 2', args: '' },
+    { cmd: '/memory', desc: 'Memory overview', args: '' },
+    { cmd: '/recall', desc: 'Search memory', args: '<query>' },
+    { cmd: '/skills', desc: 'List skills', args: '' },
+    { cmd: '/skill', desc: 'Skill details', args: '<name>' },
+    { cmd: '/run', desc: 'Run skill script', args: '<skill> [args]' },
+    { cmd: '/create-skill', desc: 'Create skill from JSON', args: '{json}' },
+    { cmd: '/thread2', desc: 'Last Thread 2 cycles', args: '[n]' },
+    { cmd: '/reflect', desc: 'Force reflection cycle', args: '' },
+    { cmd: '/exec', desc: 'Execute shell command', args: '<cmd>' },
+    { cmd: '/python', desc: 'Execute Python code', args: '<code>' },
+    { cmd: '/ls', desc: 'List files', args: '[path]' },
+    { cmd: '/read', desc: 'Read file', args: '<path>' },
+    { cmd: '/write', desc: 'Write to file', args: '<path> <content>' },
+    { cmd: '/sysinfo', desc: 'System information', args: '' },
+    { cmd: '/compress', desc: 'Force memory compression', args: '' },
+    { cmd: '/selfmodel', desc: 'Agent self-model', args: '' },
+    { cmd: '/models', desc: 'List Ollama models', args: '' },
+    { cmd: '/model', desc: 'Change model (auto-pull)', args: '<name>' },
+    { cmd: '/ollama', desc: 'Ollama connection status', args: '' },
+  ],
+};
 
 // ─── Markdown-lite renderer ───
 function renderContent(text) {
@@ -260,7 +380,7 @@ function ChatMessage({ msg }) {
               userSelect: 'none', opacity: 0.8,
             }}
           >
-            {showThinking ? '▾ Ukryj tok myślenia' : '▸ Pokaż tok myślenia'}
+            {showThinking ? getT().hideThinking : getT().showThinking}
           </div>
         )}
         {showThinking && msg.thinking && (
@@ -339,16 +459,17 @@ function CommandPalette({ visible, commands, selectedIdx, onSelect }) {
 }
 
 // ─── Chat Input ───
-function ChatInput({ onSend, disabled }) {
+function ChatInput({ onSend, disabled, t, lang }) {
   const [value, setValue] = useState('');
   const [paletteVisible, setPaletteVisible] = useState(false);
   const [paletteIdx, setPaletteIdx] = useState(-1);
   const inputRef = useRef(null);
+  const commands = COMMANDS_I18N[lang] || COMMANDS_I18N['en'];
 
   const filtered = useMemo(() => {
     if (!value.startsWith('/') || value.includes(' ')) return [];
-    return COMMANDS.filter(c => c.cmd.startsWith(value.toLowerCase()));
-  }, [value]);
+    return commands.filter(c => c.cmd.startsWith(value.toLowerCase()));
+  }, [value, commands]);
 
   useEffect(() => {
     setPaletteVisible(value.startsWith('/') && !value.includes(' ') && filtered.length > 0);
@@ -416,7 +537,7 @@ function ChatInput({ onSend, disabled }) {
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={handleKey}
-          placeholder="Napisz wiadomość lub / aby zobaczyć komendy…"
+          placeholder={t.placeholder}
           disabled={disabled}
           autoFocus
           style={{
@@ -443,7 +564,7 @@ function ChatInput({ onSend, disabled }) {
             opacity: disabled || !value.trim() ? 0.5 : 1,
             transition: 'all 0.15s',
           }}
-        >Wyślij</button>
+        >{t.send}</button>
       </div>
     </div>
   );
@@ -508,12 +629,12 @@ function ThoughtItem({ text, cycle }) {
 }
 
 // ─── Sidebar Panels ───
-function PanelThread2({ thoughts }) {
+function PanelThread2({ thoughts, t }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       {thoughts.length === 0 && (
         <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic', padding: 8 }}>
-          Oczekiwanie na myśli Thread 2…
+          {t.waitingThoughts}
         </div>
       )}
       {thoughts.map((t, i) => <ThoughtItem key={i} text={t.text} cycle={t.cycle} />)}
@@ -536,27 +657,27 @@ function StatCard({ label, value, color, wide }) {
   );
 }
 
-function PanelStatus({ status }) {
-  if (!status) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>Ładowanie…</div>;
+function PanelStatus({ status, t }) {
+  if (!status) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>{t.loading}</div>;
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-      <StatCard label="Wersja" value={`v${status.version}`} color="var(--accent-bright)" />
-      <StatCard label="Model" value={status.llm_model} />
-      <StatCard label="LLM" value={status.llm_connected ? 'Online' : 'Offline'} color={status.llm_connected ? 'var(--mint)' : 'var(--coral)'} />
-      <StatCard label="Thread 2" value={status.thread2_running ? 'Aktywny' : 'Stop'} color={status.thread2_running ? 'var(--mint)' : 'var(--coral)'} />
-      <StatCard label="Cykle" value={status.thread2_cycles} color="var(--sky)" />
-      <StatCard label="Interakcje" value={status.interactions} />
-      <StatCard label="Pamięć ST / LT" value={`${status.memory?.short_term_count || 0} / ${status.memory?.long_term_count || 0}`} color="var(--amber)" />
-      <StatCard label="Umiejętności" value={status.skills_count} color="var(--accent-bright)" />
-      <StatCard label="Uptime" value={formatUptime(status.uptime)} wide />
+      <StatCard label={t.version} value={`v${status.version}`} color="var(--accent-bright)" />
+      <StatCard label={t.model} value={status.llm_model} />
+      <StatCard label={t.llm} value={status.llm_connected ? t.online : t.offline} color={status.llm_connected ? 'var(--mint)' : 'var(--coral)'} />
+      <StatCard label={t.thread2} value={status.thread2_running ? t.active : t.stopped} color={status.thread2_running ? 'var(--mint)' : 'var(--coral)'} />
+      <StatCard label={t.cycles} value={status.thread2_cycles} color="var(--sky)" />
+      <StatCard label={t.interactions} value={status.interactions} />
+      <StatCard label={t.memoryStat} value={`${status.memory?.short_term_count || 0} / ${status.memory?.long_term_count || 0}`} color="var(--amber)" />
+      <StatCard label={t.skills} value={status.skills_count} color="var(--accent-bright)" />
+      <StatCard label={t.uptime} value={formatUptime(status.uptime)} wide />
     </div>
   );
 }
 
-function PanelSkills({ skills, onRunCmd }) {
+function PanelSkills({ skills, onRunCmd, t }) {
   if (!skills || !skills.length) return (
     <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: 8 }}>
-      Brak umiejętności — Thread 2 stworzy je automatycznie.
+      {t.noSkills}
     </div>
   );
   return (
@@ -573,12 +694,12 @@ function PanelSkills({ skills, onRunCmd }) {
           <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent-bright)' }}>{s.name}</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>{s.description}</div>
           <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 5, fontFamily: 'var(--font-mono)' }}>
-            Użycia: {s.use_count} · Skrypty: {(s.scripts || []).join(', ') || 'brak'}
+            {t.uses}: {s.use_count} · {t.scripts}: {(s.scripts || []).join(', ') || t.none}
           </div>
           {(s.scripts || []).some(x => x.endsWith('.py')) && (
             <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-              <button onClick={() => onRunCmd(`/run ${s.name}`)} style={skillBtnStyle}>▶ Uruchom</button>
-              <button onClick={() => onRunCmd(`/skill ${s.name}`)} style={{ ...skillBtnStyle, background: 'var(--bg-raised)' }}>Szczegóły</button>
+              <button onClick={() => onRunCmd(`/run ${s.name}`)} style={skillBtnStyle}>{t.run}</button>
+              <button onClick={() => onRunCmd(`/skill ${s.name}`)} style={{ ...skillBtnStyle, background: 'var(--bg-raised)' }}>{t.details}</button>
             </div>
           )}
         </div>
@@ -594,11 +715,11 @@ const skillBtnStyle = {
   cursor: 'pointer', fontWeight: 500, fontFamily: 'var(--font-body)',
 };
 
-function PanelMemory({ memory }) {
-  if (!memory) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>Ładowanie…</div>;
+function PanelMemory({ memory, t }) {
+  if (!memory) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>{t.loading}</div>;
   return (
     <div>
-      <h4 style={panelSubheader}>Krótkoterminowa ({memory.short_term?.length || 0})</h4>
+      <h4 style={panelSubheader}>{t.shortTerm} ({memory.short_term?.length || 0})</h4>
       {(memory.short_term || []).slice().reverse().slice(0, 15).map((e, i) => (
         <div key={i} style={memEntryStyle}>
           <span style={{ color: 'var(--accent-bright)', fontWeight: 500 }}>[{e.category}]</span>{' '}
@@ -608,7 +729,7 @@ function PanelMemory({ memory }) {
       ))}
       {(memory.long_term || []).length > 0 && (
         <>
-          <h4 style={{ ...panelSubheader, marginTop: 14 }}>Skompresowana ({memory.long_term.length})</h4>
+          <h4 style={{ ...panelSubheader, marginTop: 14 }}>{t.compressed} ({memory.long_term.length})</h4>
           {memory.long_term.map((e, i) => (
             <div key={i} style={memEntryStyle}>
               <span style={{ color: 'var(--accent-bright)', fontWeight: 500 }}>[{e.category}]</span>{' '}
@@ -618,24 +739,24 @@ function PanelMemory({ memory }) {
         </>
       )}
       <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-        Kompresje: {memory.stats?.compression_count || 0}
+        {t.compressions}: {memory.stats?.compression_count || 0}
       </div>
     </div>
   );
 }
 
-function PanelTimeline({ reflections }) {
+function PanelTimeline({ reflections, t }) {
   if (!reflections || !reflections.length) return (
-    <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: 8 }}>Brak refleksji.</div>
+    <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: 8 }}>{t.noReflections}</div>
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {reflections.slice().reverse().map((r, i) => {
-        const ts = new Date((r.timestamp || 0) * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+        const ts = new Date((r.timestamp || 0) * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
         return (
           <div key={i}>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--sky)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>
-              Cykl {r.cycle || '?'} · {r.phase || '?'} · {ts}
+              {t.cycle} {r.cycle || '?'} · {r.phase || '?'} · {ts}
             </div>
             <div style={{ paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
               {(r.thoughts || []).slice(0, 5).map((t, j) => (
@@ -706,15 +827,15 @@ function App() {
             thinking: m.thinking,
           })));
         }
+        // Language-aware welcome
+        const lang = (st && st.language) || 'pl';
+        const welcomeMsg = lang === 'en'
+          ? 'Hi! I\'m **ARIA** \u2014 Autonomous Reflective Intelligence Agent.\n\nType **/** to see all commands. My Thread 2 works in the background \u2014 watch the panel on the right.'
+          : 'Cze\u015b\u0107! Jestem **ARIA** \u2014 Autonomous Reflective Intelligence Agent.\n\nWpisz **/** aby zobaczy\u0107 wszystkie komendy. M\u00f3j Thread 2 pracuje w tle \u2014 obserwuj panel po prawej.';
+        setMessages(prev => [...prev, { role: 'assistant', content: welcomeMsg }]);
       } catch (e) { console.error('Init error:', e); }
     };
     loadInitial();
-
-    // Welcome message
-    setMessages(prev => [...prev, {
-      role: 'assistant',
-      content: 'Cześć! Jestem **ARIA** — Autonomous Reflective Intelligence Agent.\n\nWpisz **/** aby zobaczyć wszystkie komendy. Mój Thread 2 pracuje w tle — obserwuj panel po prawej. 🧠',
-    }]);
   }, []);
 
   // SSE connection
@@ -788,12 +909,15 @@ function App() {
 
   const sendCmd = useCallback((cmd) => sendMessage(cmd), [sendMessage]);
 
+  const t = useT(status);
+  const lang = (status && status.language) || 'pl';
+
   const tabs = [
-    { id: 'thread2', label: 'Thread 2' },
-    { id: 'status', label: 'Status' },
-    { id: 'skills', label: 'Skille' },
-    { id: 'memory', label: 'Pamięć' },
-    { id: 'timeline', label: 'Historia' },
+    { id: 'thread2', label: t.tabThread2 },
+    { id: 'status', label: t.tabStatus },
+    { id: 'skills', label: t.tabSkills },
+    { id: 'memory', label: t.tabMemory },
+    { id: 'timeline', label: t.tabTimeline },
   ];
 
   return (
@@ -824,7 +948,7 @@ function App() {
           {sending && <TypingIndicator />}
           <div ref={chatEndRef} />
         </div>
-        <ChatInput onSend={sendMessage} disabled={sending} />
+        <ChatInput onSend={sendMessage} disabled={sending} t={t} lang={lang} />
       </div>
 
       {/* Sidebar */}
@@ -855,11 +979,11 @@ function App() {
 
         {/* Panel content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-          {activeTab === 'thread2' && <PanelThread2 thoughts={thoughts} />}
-          {activeTab === 'status' && <PanelStatus status={status} />}
-          {activeTab === 'skills' && <PanelSkills skills={skills} onRunCmd={sendCmd} />}
-          {activeTab === 'memory' && <PanelMemory memory={memory} />}
-          {activeTab === 'timeline' && <PanelTimeline reflections={reflections} />}
+          {activeTab === 'thread2' && <PanelThread2 thoughts={thoughts} t={t} />}
+          {activeTab === 'status' && <PanelStatus status={status} t={t} />}
+          {activeTab === 'skills' && <PanelSkills skills={skills} onRunCmd={sendCmd} t={t} />}
+          {activeTab === 'memory' && <PanelMemory memory={memory} t={t} />}
+          {activeTab === 'timeline' && <PanelTimeline reflections={reflections} t={t} />}
         </div>
 
         {/* Footer buttons */}
@@ -870,9 +994,9 @@ function App() {
           background: 'var(--bg-panel)',
         }}>
           {[
-            { label: '🔄 Refleksja', cmd: '/reflect' },
-            { label: '📊 Status', cmd: '/status' },
-            { label: '🔃 Odśwież', action: async () => {
+            { label: t.reflectionBtn, cmd: '/reflect' },
+            { label: t.statusBtn, cmd: '/status' },
+            { label: t.refreshBtn, action: async () => {
               try {
                 setStatus(await api.get('/api/status'));
                 setSkills(await api.get('/api/skills'));
