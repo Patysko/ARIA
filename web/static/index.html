@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARIA — Autonomous Reflective Intelligence Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-void: #08080c;
+  --bg-deep: #0e0e14;
+  --bg-panel: #13131b;
+  --bg-surface: #1a1a24;
+  --bg-raised: #22222e;
+  --bg-hover: #2a2a38;
+
+  --text-primary: #e4e2ec;
+  --text-secondary: #908ea0;
+  --text-muted: #5c5a6e;
+
+  --accent: #6e56cf;
+  --accent-bright: #8b72ff;
+  --accent-dim: #4a3a8a;
+  --accent-glow: rgba(110, 86, 207, 0.15);
+
+  --mint: #3dd68c;
+  --mint-dim: rgba(61, 214, 140, 0.12);
+  --coral: #e5484d;
+  --coral-dim: rgba(229, 72, 77, 0.10);
+  --amber: #f1a10d;
+  --amber-dim: rgba(241, 161, 13, 0.10);
+  --sky: #36b5e4;
+  --sky-dim: rgba(54, 181, 228, 0.10);
+
+  --border: rgba(255, 255, 255, 0.06);
+  --border-accent: rgba(110, 86, 207, 0.3);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+
+  --font-body: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: var(--font-body);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes glow { 0%, 100% { box-shadow: 0 0 4px var(--accent); } 50% { box-shadow: 0 0 12px var(--accent-bright); } }
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-4px); }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── API helpers ───
+const api = {
+  get: async (path) => {
+    const r = await fetch(path);
+    return r.json();
+  },
+  post: async (path, data) => {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return r.json();
+  },
+};
+
+// ─── Commands list ───
+const COMMANDS = [
+  { cmd: '/help', desc: 'Lista komend', args: '' },
+  { cmd: '/status', desc: 'Status agenta + Thread 2', args: '' },
+  { cmd: '/memory', desc: 'Podgląd pamięci', args: '' },
+  { cmd: '/recall', desc: 'Przeszukaj pamięć', args: '<zapytanie>' },
+  { cmd: '/skills', desc: 'Lista umiejętności', args: '' },
+  { cmd: '/skill', desc: 'Szczegóły umiejętności', args: '<nazwa>' },
+  { cmd: '/run', desc: 'Uruchom skrypt skilla', args: '<skill> [args]' },
+  { cmd: '/create-skill', desc: 'Stwórz skill z JSON', args: '{json}' },
+  { cmd: '/thread2', desc: 'Ostatnie cykle Thread 2', args: '[n]' },
+  { cmd: '/reflect', desc: 'Wymuś cykl refleksji', args: '' },
+  { cmd: '/exec', desc: 'Wykonaj komendę shell', args: '<cmd>' },
+  { cmd: '/python', desc: 'Wykonaj kod Python', args: '<code>' },
+  { cmd: '/ls', desc: 'Listuj pliki', args: '[path]' },
+  { cmd: '/read', desc: 'Czytaj plik', args: '<path>' },
+  { cmd: '/write', desc: 'Zapisz do pliku', args: '<path> <treść>' },
+  { cmd: '/sysinfo', desc: 'Informacje o systemie', args: '' },
+  { cmd: '/compress', desc: 'Wymuś kompresję pamięci', args: '' },
+  { cmd: '/selfmodel', desc: 'Model własny agenta', args: '' },
+  { cmd: '/models', desc: 'Lista modeli Ollama', args: '' },
+  { cmd: '/model', desc: 'Zmień model (auto-pull)', args: '<nazwa>' },
+  { cmd: '/ollama', desc: 'Status połączenia Ollama', args: '' },
+];
+
+// ─── Markdown-lite renderer ───
+function renderContent(text) {
+  if (!text) return '';
+  let s = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  // Code blocks
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  // Inline code
+  s = s.replace(/`([^`]+?)`/g, '<code class="inline">$1</code>');
+  // Bold
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Line breaks
+  s = s.replace(/\n/g, '<br/>');
+  return s;
+}
+
+
+// ═══════════════════════════════════════
+//  COMPONENTS
+// ═══════════════════════════════════════
+
+// ─── Status Indicator ───
+function StatusDot({ active, pulse }) {
+  const color = active ? 'var(--mint)' : 'var(--coral)';
+  return (
+    <span style={{
+      display: 'inline-block',
+      width: 7, height: 7,
+      borderRadius: '50%',
+      background: color,
+      boxShadow: active ? `0 0 6px ${color}` : 'none',
+      animation: pulse && active ? 'pulse 2.5s ease-in-out infinite' : 'none',
+      marginRight: 6,
+    }} />
+  );
+}
+
+// ─── Header ───
+function Header({ status }) {
+  return (
+    <header style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '0 20px', height: 48,
+      background: 'var(--bg-deep)',
+      borderBottom: '1px solid var(--border)',
+      flexShrink: 0,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{
+          fontSize: 15, fontWeight: 700, letterSpacing: '-0.3px',
+          background: 'linear-gradient(135deg, var(--accent-bright), var(--sky))',
+          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+        }}>ARIA</span>
+        <span style={{
+          fontSize: 11, color: 'var(--text-muted)',
+          fontFamily: 'var(--font-mono)', fontWeight: 400,
+        }}>v{status?.version || '...'}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          <StatusDot active={status?.llm_connected} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{status?.llm_model || '...'}</span>
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          <StatusDot active={status?.thread2_running} pulse />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            T2{status?.thread2_running ? ` #${status?.thread2_cycles}` : ' off'}
+          </span>
+        </span>
+      </div>
+    </header>
+  );
+}
+
+// ─── Chat Message ───
+function ChatMessage({ msg }) {
+  const [showThinking, setShowThinking] = useState(false);
+  const isUser = msg.role === 'user';
+  const isCmd = msg.is_command || msg.type === 'command';
+  const isError = msg.type === 'error';
+  const isProactive = msg.type === 'proactive';
+
+  const bubbleStyle = {
+    maxWidth: '85%',
+    padding: '10px 14px',
+    borderRadius: 'var(--radius)',
+    fontSize: 13.5,
+    lineHeight: 1.65,
+    wordBreak: 'break-word',
+    animation: 'fadeIn 0.25s ease',
+    ...(isUser ? {
+      alignSelf: 'flex-end',
+      background: 'var(--accent-dim)',
+      border: '1px solid var(--border-accent)',
+      borderBottomRightRadius: 'var(--radius-xs)',
+    } : {
+      alignSelf: 'flex-start',
+      background: 'var(--bg-surface)',
+      border: `1px solid ${isError ? 'var(--coral-dim)' : isCmd ? 'rgba(54,181,228,0.15)' : isProactive ? 'var(--accent-glow)' : 'var(--border)'}`,
+      borderBottomLeftRadius: 'var(--radius-xs)',
+      borderLeft: isError ? '2px solid var(--coral)' : isCmd ? '2px solid var(--sky)' : isProactive ? '2px solid var(--accent)' : 'none',
+    }),
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+      <div style={bubbleStyle}>
+        {msg.skill_used && (
+          <span style={{
+            display: 'inline-block', fontSize: 10, padding: '1px 7px',
+            borderRadius: 'var(--radius-xs)', background: 'var(--accent)',
+            color: '#fff', marginBottom: 6, fontWeight: 500,
+            fontFamily: 'var(--font-mono)',
+          }}>⚡ {msg.skill_used}</span>
+        )}
+        {isCmd && (
+          <span style={{
+            display: 'inline-block', fontSize: 9, padding: '1px 6px',
+            borderRadius: 'var(--radius-xs)', background: 'var(--sky)',
+            color: 'var(--bg-void)', marginBottom: 6, fontWeight: 600,
+            letterSpacing: '0.5px', fontFamily: 'var(--font-mono)',
+          }}>CMD</span>
+        )}
+        {msg.thinking && (
+          <div
+            onClick={() => setShowThinking(!showThinking)}
+            style={{
+              fontSize: 11, color: 'var(--sky)', cursor: 'pointer',
+              marginBottom: 6, fontFamily: 'var(--font-mono)',
+              userSelect: 'none', opacity: 0.8,
+            }}
+          >
+            {showThinking ? '▾ Ukryj tok myślenia' : '▸ Pokaż tok myślenia'}
+          </div>
+        )}
+        {showThinking && msg.thinking && (
+          <div style={{
+            padding: '8px 10px', marginBottom: 8,
+            background: 'var(--sky-dim)',
+            border: '1px solid rgba(54,181,228,0.12)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 11.5, color: 'var(--text-secondary)',
+            lineHeight: 1.5, fontFamily: 'var(--font-mono)',
+          }} dangerouslySetInnerHTML={{ __html: renderContent(msg.thinking) }} />
+        )}
+        <div
+          dangerouslySetInnerHTML={{ __html: renderContent(msg.content) }}
+          style={{ fontFamily: isCmd ? 'var(--font-mono)' : 'inherit', fontSize: isCmd ? 12.5 : 13.5 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Typing indicator ───
+function TypingIndicator() {
+  return (
+    <div style={{
+      display: 'flex', gap: 4, padding: '4px 20px',
+      alignSelf: 'flex-start',
+    }}>
+      {[0, 1, 2].map(i => (
+        <span key={i} style={{
+          width: 5, height: 5, borderRadius: '50%',
+          background: 'var(--text-muted)',
+          animation: `dotBounce 1.2s ease infinite ${i * 0.15}s`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Command palette ───
+function CommandPalette({ visible, commands, selectedIdx, onSelect }) {
+  if (!visible || !commands.length) return null;
+  return (
+    <div style={{
+      position: 'absolute', bottom: '100%', left: 0, right: 0,
+      background: 'var(--bg-panel)',
+      border: '1px solid var(--border)',
+      borderBottom: 'none',
+      maxHeight: 260, overflowY: 'auto',
+      boxShadow: 'var(--shadow-lg)',
+      zIndex: 20,
+    }}>
+      {commands.map((c, i) => (
+        <div
+          key={c.cmd}
+          onClick={() => onSelect(c)}
+          style={{
+            padding: '8px 14px', cursor: 'pointer',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            fontSize: 12.5,
+            borderBottom: '1px solid var(--border)',
+            background: i === selectedIdx ? 'var(--bg-hover)' : 'transparent',
+            transition: 'background 0.1s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+          onMouseLeave={e => { if (i !== selectedIdx) e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={{ color: 'var(--sky)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
+            {c.cmd}{c.args ? ` ${c.args}` : ''}
+          </span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>{c.desc}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Chat Input ───
+function ChatInput({ onSend, disabled }) {
+  const [value, setValue] = useState('');
+  const [paletteVisible, setPaletteVisible] = useState(false);
+  const [paletteIdx, setPaletteIdx] = useState(-1);
+  const inputRef = useRef(null);
+
+  const filtered = useMemo(() => {
+    if (!value.startsWith('/') || value.includes(' ')) return [];
+    return COMMANDS.filter(c => c.cmd.startsWith(value.toLowerCase()));
+  }, [value]);
+
+  useEffect(() => {
+    setPaletteVisible(value.startsWith('/') && !value.includes(' ') && filtered.length > 0);
+    setPaletteIdx(-1);
+  }, [value, filtered]);
+
+  const submit = useCallback(() => {
+    const v = value.trim();
+    if (!v || disabled) return;
+    setValue('');
+    setPaletteVisible(false);
+    onSend(v);
+  }, [value, disabled, onSend]);
+
+  const handleKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (paletteVisible && paletteIdx >= 0 && filtered[paletteIdx]) {
+        const c = filtered[paletteIdx];
+        setValue(c.cmd + (c.args ? ' ' : ''));
+        setPaletteVisible(false);
+        if (!c.args) { onSend(c.cmd); setValue(''); }
+        return;
+      }
+      submit();
+    } else if (e.key === 'ArrowDown' && paletteVisible) {
+      e.preventDefault();
+      setPaletteIdx(i => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp' && paletteVisible) {
+      e.preventDefault();
+      setPaletteIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Tab' && paletteVisible && paletteIdx >= 0) {
+      e.preventDefault();
+      const c = filtered[paletteIdx];
+      setValue(c.cmd + (c.args ? ' ' : ''));
+      setPaletteVisible(false);
+    } else if (e.key === 'Escape') {
+      setPaletteVisible(false);
+    }
+  };
+
+  const isCmd = value.startsWith('/');
+
+  return (
+    <div style={{
+      position: 'relative',
+      borderTop: '1px solid var(--border)',
+      background: 'var(--bg-deep)',
+      flexShrink: 0,
+    }}>
+      <CommandPalette
+        visible={paletteVisible}
+        commands={filtered}
+        selectedIdx={paletteIdx}
+        onSelect={(c) => {
+          setValue(c.cmd + (c.args ? ' ' : ''));
+          setPaletteVisible(false);
+          inputRef.current?.focus();
+          if (!c.args) { onSend(c.cmd); setValue(''); }
+        }}
+      />
+      <div style={{ display: 'flex', gap: 8, padding: '10px 14px' }}>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="Napisz wiadomość lub / aby zobaczyć komendy…"
+          disabled={disabled}
+          autoFocus
+          style={{
+            flex: 1, background: 'var(--bg-surface)',
+            border: `1px solid ${isCmd ? 'rgba(54,181,228,0.3)' : 'var(--border)'}`,
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 14px', color: 'var(--text-primary)',
+            fontSize: 13.5, fontFamily: isCmd ? 'var(--font-mono)' : 'var(--font-body)',
+            outline: 'none', transition: 'border 0.15s',
+          }}
+          onFocus={e => e.target.style.borderColor = isCmd ? 'var(--sky)' : 'var(--accent)'}
+          onBlur={e => e.target.style.borderColor = isCmd ? 'rgba(54,181,228,0.3)' : 'var(--border)'}
+        />
+        <button
+          onClick={submit}
+          disabled={disabled || !value.trim()}
+          style={{
+            background: disabled ? 'var(--bg-raised)' : 'var(--accent)',
+            color: '#fff', border: 'none',
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 18px', fontWeight: 600,
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            fontSize: 13, fontFamily: 'var(--font-body)',
+            opacity: disabled || !value.trim() ? 0.5 : 1,
+            transition: 'all 0.15s',
+          }}
+        >Wyślij</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Thought item ───
+function ThoughtItem({ text, cycle }) {
+  // New reflection.py uses [T2] prefix and --- for headers
+  const isHeader = text.startsWith('---') || text.startsWith('-- ');
+  const isSkill = text.includes('Stworzono') || text.includes('NAPRAWIONO') || text.includes('Tworze skill');
+  const isError = text.includes('BLAD') || text.includes('Blad') || text.includes('Nadal nie');
+  const isTest = text.includes('OK ') || text.includes('dziala') || text.includes('Testuje');
+  const isInstall = text.includes('Instaluje') || text.includes('Zainstalowano') || text.includes('pip');
+  const isDesign = text.includes('Projektuje') || text.includes('Testy:');
+  const isPomijam = text.includes('Pomijam') || text.includes('Pominiety');
+
+  // Color scheme based on message type
+  let borderColor = 'var(--accent-dim)';
+  let bgColor = 'transparent';
+  let icon = '';
+
+  if (isHeader) {
+    borderColor = 'var(--sky)'; bgColor = 'var(--sky-dim)'; icon = '🔄 ';
+  } else if (isSkill) {
+    borderColor = 'var(--mint)'; bgColor = 'var(--mint-dim)'; icon = '✨ ';
+  } else if (isError) {
+    borderColor = 'var(--coral)'; bgColor = 'var(--coral-dim)'; icon = '❌ ';
+  } else if (isTest) {
+    borderColor = 'var(--mint)'; icon = '✅ ';
+  } else if (isInstall) {
+    borderColor = 'var(--amber)'; bgColor = 'var(--amber-dim)'; icon = '📦 ';
+  } else if (isDesign) {
+    borderColor = 'var(--accent)'; icon = '🔨 ';
+  } else if (isPomijam) {
+    borderColor = 'var(--text-muted)'; icon = '⏭️ ';
+  }
+
+  // Strip [T2] prefix for cleaner display
+  let displayText = text;
+  if (displayText.startsWith('[T2] ')) {
+    displayText = displayText.substring(5);
+  }
+
+  const ts = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  return (
+    <div style={{
+      padding: '8px 10px',
+      background: bgColor,
+      borderRadius: 'var(--radius-sm)',
+      fontSize: 11.5, lineHeight: 1.5,
+      borderLeft: `2px solid ${borderColor}`,
+      color: isHeader ? 'var(--sky)' : 'var(--text-secondary)',
+      fontFamily: 'var(--font-mono)',
+      fontWeight: isHeader ? 600 : 400,
+      animation: 'slideIn 0.2s ease',
+    }}>
+      <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{ts}</span>{' '}
+      {icon}{displayText}
+    </div>
+  );
+}
+
+// ─── Sidebar Panels ───
+function PanelThread2({ thoughts }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      {thoughts.length === 0 && (
+        <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic', padding: 8 }}>
+          Oczekiwanie na myśli Thread 2…
+        </div>
+      )}
+      {thoughts.map((t, i) => <ThoughtItem key={i} text={t.text} cycle={t.cycle} />)}
+    </div>
+  );
+}
+
+function StatCard({ label, value, color, wide }) {
+  return (
+    <div style={{
+      background: 'var(--bg-deep)',
+      borderRadius: 'var(--radius-sm)',
+      padding: '12px 14px',
+      border: '1px solid var(--border)',
+      gridColumn: wide ? '1 / -1' : 'auto',
+    }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'var(--font-mono)' }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, marginTop: 3, fontFamily: 'var(--font-mono)', color: color || 'var(--text-primary)' }}>{value}</div>
+    </div>
+  );
+}
+
+function PanelStatus({ status }) {
+  if (!status) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>Ładowanie…</div>;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+      <StatCard label="Wersja" value={`v${status.version}`} color="var(--accent-bright)" />
+      <StatCard label="Model" value={status.llm_model} />
+      <StatCard label="LLM" value={status.llm_connected ? 'Online' : 'Offline'} color={status.llm_connected ? 'var(--mint)' : 'var(--coral)'} />
+      <StatCard label="Thread 2" value={status.thread2_running ? 'Aktywny' : 'Stop'} color={status.thread2_running ? 'var(--mint)' : 'var(--coral)'} />
+      <StatCard label="Cykle" value={status.thread2_cycles} color="var(--sky)" />
+      <StatCard label="Interakcje" value={status.interactions} />
+      <StatCard label="Pamięć ST / LT" value={`${status.memory?.short_term_count || 0} / ${status.memory?.long_term_count || 0}`} color="var(--amber)" />
+      <StatCard label="Umiejętności" value={status.skills_count} color="var(--accent-bright)" />
+      <StatCard label="Uptime" value={formatUptime(status.uptime)} wide />
+    </div>
+  );
+}
+
+function PanelSkills({ skills, onRunCmd }) {
+  if (!skills || !skills.length) return (
+    <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: 8 }}>
+      Brak umiejętności — Thread 2 stworzy je automatycznie.
+    </div>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {skills.map(s => (
+        <div key={s.name} style={{
+          background: 'var(--bg-deep)', borderRadius: 'var(--radius-sm)',
+          padding: '10px 12px', border: '1px solid var(--border)',
+          transition: 'border 0.15s',
+        }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+          onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+        >
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent-bright)' }}>{s.name}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>{s.description}</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 5, fontFamily: 'var(--font-mono)' }}>
+            Użycia: {s.use_count} · Skrypty: {(s.scripts || []).join(', ') || 'brak'}
+          </div>
+          {(s.scripts || []).some(x => x.endsWith('.py')) && (
+            <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+              <button onClick={() => onRunCmd(`/run ${s.name}`)} style={skillBtnStyle}>▶ Uruchom</button>
+              <button onClick={() => onRunCmd(`/skill ${s.name}`)} style={{ ...skillBtnStyle, background: 'var(--bg-raised)' }}>Szczegóły</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const skillBtnStyle = {
+  padding: '3px 10px', fontSize: 10.5,
+  background: 'var(--accent-dim)', color: '#fff',
+  border: 'none', borderRadius: 'var(--radius-xs)',
+  cursor: 'pointer', fontWeight: 500, fontFamily: 'var(--font-body)',
+};
+
+function PanelMemory({ memory }) {
+  if (!memory) return <div style={{ color: 'var(--text-muted)', padding: 8 }}>Ładowanie…</div>;
+  return (
+    <div>
+      <h4 style={panelSubheader}>Krótkoterminowa ({memory.short_term?.length || 0})</h4>
+      {(memory.short_term || []).slice().reverse().slice(0, 15).map((e, i) => (
+        <div key={i} style={memEntryStyle}>
+          <span style={{ color: 'var(--accent-bright)', fontWeight: 500 }}>[{e.category}]</span>{' '}
+          <span style={{ color: 'var(--amber)' }}>{'★'.repeat(Math.round(e.importance * 5))}</span>{' '}
+          {e.content?.substring(0, 100)}
+        </div>
+      ))}
+      {(memory.long_term || []).length > 0 && (
+        <>
+          <h4 style={{ ...panelSubheader, marginTop: 14 }}>Skompresowana ({memory.long_term.length})</h4>
+          {memory.long_term.map((e, i) => (
+            <div key={i} style={memEntryStyle}>
+              <span style={{ color: 'var(--accent-bright)', fontWeight: 500 }}>[{e.category}]</span>{' '}
+              ({e.source_count} src) {e.summary?.substring(0, 100)}
+            </div>
+          ))}
+        </>
+      )}
+      <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+        Kompresje: {memory.stats?.compression_count || 0}
+      </div>
+    </div>
+  );
+}
+
+function PanelTimeline({ reflections }) {
+  if (!reflections || !reflections.length) return (
+    <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: 8 }}>Brak refleksji.</div>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {reflections.slice().reverse().map((r, i) => {
+        const ts = new Date((r.timestamp || 0) * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+        return (
+          <div key={i}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--sky)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>
+              Cykl {r.cycle || '?'} · {r.phase || '?'} · {ts}
+            </div>
+            <div style={{ paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
+              {(r.thoughts || []).slice(0, 5).map((t, j) => (
+                <div key={j} style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 3, lineHeight: 1.4 }}>
+                  {t.substring(0, 180)}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const panelSubheader = { fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: 8, fontFamily: 'var(--font-mono)' };
+const memEntryStyle = {
+  padding: '6px 8px', background: 'var(--bg-deep)', borderRadius: 'var(--radius-xs)',
+  marginBottom: 4, fontSize: 11.5, borderLeft: '2px solid var(--border)',
+  fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', lineHeight: 1.4,
+};
+
+function formatUptime(s) {
+  if (!s && s !== 0) return '—';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}h ${m}m ${sec}s`;
+}
+
+
+// ═══════════════════════════════════════
+//  MAIN APP
+// ═══════════════════════════════════════
+
+function App() {
+  const [messages, setMessages] = useState([]);
+  const [thoughts, setThoughts] = useState([]);
+  const [status, setStatus] = useState(null);
+  const [skills, setSkills] = useState([]);
+  const [memory, setMemory] = useState(null);
+  const [reflections, setReflections] = useState([]);
+  const [activeTab, setActiveTab] = useState('thread2');
+  const [sending, setSending] = useState(false);
+  const chatEndRef = useRef(null);
+
+  // Scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, sending]);
+
+  // Load initial data
+  useEffect(() => {
+    const loadInitial = async () => {
+      try {
+        const [st, hist] = await Promise.all([
+          api.get('/api/status'),
+          api.get('/api/chat-history'),
+        ]);
+        setStatus(st);
+        if (hist && hist.length) {
+          setMessages(hist.map(m => ({
+            role: m.role,
+            content: m.content,
+            is_command: m.is_command,
+            type: m.is_command ? 'command' : undefined,
+            skill_used: m.skill_used,
+            thinking: m.thinking,
+          })));
+        }
+      } catch (e) { console.error('Init error:', e); }
+    };
+    loadInitial();
+
+    // Welcome message
+    setMessages(prev => [...prev, {
+      role: 'assistant',
+      content: 'Cześć! Jestem **ARIA** — Autonomous Reflective Intelligence Agent.\n\nWpisz **/** aby zobaczyć wszystkie komendy. Mój Thread 2 pracuje w tle — obserwuj panel po prawej. 🧠',
+    }]);
+  }, []);
+
+  // SSE connection
+  useEffect(() => {
+    let sse;
+    const connect = () => {
+      sse = new EventSource('/api/events');
+      sse.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'proactive_message') {
+            setMessages(prev => [...prev, { role: 'assistant', content: data.data, type: 'proactive' }]);
+          } else {
+            setThoughts(prev => [{ text: data.data, cycle: data.cycle, ts: Date.now() }, ...prev].slice(0, 80));
+          }
+        } catch (err) {}
+      };
+      sse.onerror = () => { sse.close(); setTimeout(connect, 3000); };
+    };
+    connect();
+    return () => sse?.close();
+  }, []);
+
+  // Poll status
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try { setStatus(await api.get('/api/status')); } catch (e) {}
+    }, 12000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load panel data when tab changes
+  useEffect(() => {
+    const loadTab = async () => {
+      try {
+        if (activeTab === 'status') setStatus(await api.get('/api/status'));
+        else if (activeTab === 'skills') setSkills(await api.get('/api/skills'));
+        else if (activeTab === 'memory') setMemory(await api.get('/api/memory'));
+        else if (activeTab === 'timeline') setReflections(await api.get('/api/reflections?n=30'));
+      } catch (e) {}
+    };
+    loadTab();
+  }, [activeTab]);
+
+  const sendMessage = useCallback(async (text) => {
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    setSending(true);
+    try {
+      const data = await api.post('/api/message', { message: text });
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.content,
+        type: data.type,
+        is_command: data.type === 'command',
+        skill_used: data.skill_used,
+        skills_used: data.skills_used,
+        thinking: data.thinking,
+      }]);
+      // Refresh status after model changes
+      if (text.startsWith('/model ') || text === '/status') {
+        setTimeout(async () => { try { setStatus(await api.get('/api/status')); } catch(e){} }, 500);
+      }
+      if (text.startsWith('/run ') || text.startsWith('/create-skill') || text === '/skills') {
+        setTimeout(async () => { try { setSkills(await api.get('/api/skills')); } catch(e){} }, 500);
+      }
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Błąd połączenia: ${e.message}`, type: 'error' }]);
+    }
+    setSending(false);
+  }, []);
+
+  const sendCmd = useCallback((cmd) => sendMessage(cmd), [sendMessage]);
+
+  const tabs = [
+    { id: 'thread2', label: 'Thread 2' },
+    { id: 'status', label: 'Status' },
+    { id: 'skills', label: 'Skille' },
+    { id: 'memory', label: 'Pamięć' },
+    { id: 'timeline', label: 'Historia' },
+  ];
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '1fr 380px',
+      gridTemplateRows: '48px 1fr',
+      height: '100vh', gap: 0,
+    }}>
+      {/* Header */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <Header status={status} />
+      </div>
+
+      {/* Chat area */}
+      <div style={{
+        display: 'flex', flexDirection: 'column',
+        overflow: 'hidden',
+        borderRight: '1px solid var(--border)',
+        background: 'var(--bg-void)',
+      }}>
+        <div style={{
+          flex: 1, overflowY: 'auto',
+          padding: '16px 18px',
+          display: 'flex', flexDirection: 'column', gap: 8,
+        }}>
+          {messages.map((msg, i) => <ChatMessage key={i} msg={msg} />)}
+          {sending && <TypingIndicator />}
+          <div ref={chatEndRef} />
+        </div>
+        <ChatInput onSend={sendMessage} disabled={sending} />
+      </div>
+
+      {/* Sidebar */}
+      <div style={{
+        display: 'flex', flexDirection: 'column',
+        overflow: 'hidden',
+        background: 'var(--bg-panel)',
+      }}>
+        {/* Tabs */}
+        <div style={{
+          display: 'flex', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-panel)', flexShrink: 0, overflowX: 'auto',
+        }}>
+          {tabs.map(t => (
+            <div
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                padding: '9px 13px', fontSize: 11.5, fontWeight: 500,
+                color: activeTab === t.id ? 'var(--accent-bright)' : 'var(--text-muted)',
+                borderBottom: activeTab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
+                cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                fontFamily: 'var(--font-body)',
+              }}
+            >{t.label}</div>
+          ))}
+        </div>
+
+        {/* Panel content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+          {activeTab === 'thread2' && <PanelThread2 thoughts={thoughts} />}
+          {activeTab === 'status' && <PanelStatus status={status} />}
+          {activeTab === 'skills' && <PanelSkills skills={skills} onRunCmd={sendCmd} />}
+          {activeTab === 'memory' && <PanelMemory memory={memory} />}
+          {activeTab === 'timeline' && <PanelTimeline reflections={reflections} />}
+        </div>
+
+        {/* Footer buttons */}
+        <div style={{
+          padding: '10px 14px',
+          borderTop: '1px solid var(--border)',
+          display: 'flex', gap: 6, flexShrink: 0,
+          background: 'var(--bg-panel)',
+        }}>
+          {[
+            { label: '🔄 Refleksja', cmd: '/reflect' },
+            { label: '📊 Status', cmd: '/status' },
+            { label: '🔃 Odśwież', action: async () => {
+              try {
+                setStatus(await api.get('/api/status'));
+                setSkills(await api.get('/api/skills'));
+                setMemory(await api.get('/api/memory'));
+                setReflections(await api.get('/api/reflections?n=30'));
+              } catch(e) {}
+            }},
+          ].map((btn, i) => (
+            <button
+              key={i}
+              onClick={() => btn.cmd ? sendCmd(btn.cmd) : btn.action?.()}
+              style={{
+                flex: 1, padding: '7px 8px', fontSize: 11.5,
+                background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer', fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-surface)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+            >{btn.label}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Render ───
+ReactDOM.render(<App />, document.getElementById('root'));
+</script>
+</body>
+</html>

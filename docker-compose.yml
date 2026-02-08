@@ -1,0 +1,39 @@
+###############################################################################
+# ARIA Agent — Docker Compose
+#
+# Usage:
+#   docker compose up -d          # start in web mode (default)
+#   docker compose logs -f aria   # view logs
+#
+# Environment variables:
+#   ARIA_MODEL=codegemma:latest   # default model
+#   OLLAMA_HOST=http://host.docker.internal:11434
+#
+###############################################################################
+
+services:
+  aria:
+    build: .
+    container_name: aria-agent
+    ports:
+      - "8080:8080"
+    environment:
+      - ARIA_MODEL=${ARIA_MODEL:-codegemma:latest}
+      - ARIA_MODE=external
+      - ARIA_LANG=${ARIA_LANG:-pl}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+    volumes:
+      # Persist memory and skills between runs
+      - aria-memory:/home/aria/aria-agent/memory
+      - aria-skills:/home/aria/aria-agent/skills
+      - aria-workspace:/home/aria/aria-workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Default: start in web mode
+    command: ["--web"]
+    restart: unless-stopped
+
+volumes:
+  aria-memory:
+  aria-skills:
+  aria-workspace:
