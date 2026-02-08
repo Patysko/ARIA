@@ -28,6 +28,7 @@ from core.skills_manager import SkillsManager
 from core.computer import ComputerTools
 from core.reflection import ReflectionThread
 from core.llm import LLMClient
+from core.logger import log
 from core.prompts import (
     get_lang, SYSTEM_PROMPT_TEMPLATE,
     COT_SYSTEM, CHAT_SYSTEM, COT_ANALYZE, COT_PLAN, COT_INTERPRET, COT_FINAL,
@@ -35,6 +36,7 @@ from core.prompts import (
     COT_SKILL_SELECT, COT_FALLBACK_SKILL_SELECT,
     CMD_DESC, UI,
 )
+from core.logger import log
 
 
 class AriaWebAgent:
@@ -88,16 +90,24 @@ class AriaWebAgent:
             for q in dead:
                 self._sse_queues.remove(q)
 
-    def _queue_user_message(self, message: str):
+    def _queue_user_message(self, message: str, source: str = "thread2"):
         """Thread 2 can send proactive messages to the user."""
+        log.thread2_to_user(message)
         event = {
             "type": "proactive_message",
             "data": message,
+            "source": source,
             "timestamp": time.time(),
         }
         with self._pending_lock:
             self._pending_messages.append(event)
-        # Also broadcast via SSE so the UI gets it immediately
+        # Also add to chat history so it persists
+        self.chat_history.append({
+            "role": "assistant", "content": message,
+            "is_proactive": True, "source": source,
+            "ts": time.time(),
+        })
+        # Broadcast via SSE so the UI gets it immediately
         with self._sse_lock:
             for q in self._sse_queues:
                 try:
@@ -130,6 +140,7 @@ class AriaWebAgent:
         with self._agent_lock:
             msg = message.strip()
             if msg.startswith("/"):
+                log.command(msg)
                 return self._route_command(msg)
             else:
                 return self._chat(msg)
@@ -161,6 +172,7 @@ class AriaWebAgent:
             "/models":       lambda: self._cmd_models(),
             "/model":        lambda: self._cmd_model(arg),
             "/ollama":       lambda: self._cmd_ollama(),
+            "/tasks":        lambda: self._cmd_tasks(),
         }
 
         handler = routes.get(command)
@@ -481,14 +493,34 @@ class AriaWebAgent:
             f"{L['ollama_run']}"
         )}
 
+    def _cmd_tasks(self) -> dict:
+        L = UI[get_lang()]
+        pending = self.memory.get_pending_tasks()
+        all_tasks = self.memory.pending_tasks
+        lbl_pending = "Pending" if get_lang() == "en" else "Oczekujace"
+        lbl_done = "Completed" if get_lang() == "en" else "Wykonane"
+        lbl_failed = "Failed" if get_lang() == "en" else "Nieudane"
+
+        lines = [f"**📋 Tasks ({len(all_tasks)} total, {len(pending)} pending)**\n"]
+        for t in all_tasks[-15:]:
+            status_icon = {"pending": "⏳", "done": "✅", "failed": "❌", "in_progress": "🔄"}.get(t["status"], "?")
+            msg = t["message"][:80]
+            lines.append(f"  {status_icon} `{t['id']}` [{t['status']}] {msg}")
+            if t.get("result"):
+                lines.append(f"    → {t['result'][:100]}")
+        if not all_tasks:
+            lines.append("  (no tasks)")
+        return {"type": "command", "content": "\n".join(lines)}
+
     # =========================================
     #  CHAT -- Chain of Thought reasoning
     # =========================================
 
     def _chat(self, message: str) -> dict:
         self.interaction_count += 1
+        log.user(message, self.interaction_count)
 
-        # Store in memory -- only meaningful user inputs (filtered by memory module)
+        # Store in memory
         cat = self._categorize(message)
         imp = self._assess_importance(message)
         self.memory.add(message, category=cat, importance=imp,
@@ -500,35 +532,34 @@ class AriaWebAgent:
 
         self._update_system_prompt()
 
-        # === CHAIN OF THOUGHT ===
-        thinking_steps = []
+        # === CHAIN OF THOUGHT (JSON-structured) ===
+        thinking_steps = []  # [(label, display_str)]
         skill_results = {}
         skills_used = []
         L = UI[get_lang()]
 
-        # -- Step 1: Analyze query (LLM call #1) --
+        # -- Step 1: Analyze query → JSON --
         analysis = self._cot_step_analyze(message)
-        thinking_steps.append((L["cot_analysis"], analysis))
+        thinking_steps.append((L["cot_analysis"],
+            json.dumps(analysis, ensure_ascii=False, indent=2)))
 
-        # -- Step 2: Recall relevant memory (exclude Thread 2 data) --
+        # -- Step 2: Recall relevant memory --
         from core.prompts import MEM
         no_mem = MEM.get(get_lang(), MEM["en"])["no_relevant"]
         budget = self.llm.get_context_budget()
         memory_ctx = self.memory.get_relevant_context(
-            message,
-            max_tokens=budget["memory_budget"],
+            message, max_tokens=budget["memory_budget"],
             exclude_sources=["thread2"],
         )
         if memory_ctx and memory_ctx != no_mem:
             thinking_steps.append((L["cot_memory"], memory_ctx))
 
-        # -- Step 3: LLM-driven skill selection (LLM call #2) --
-        #    Agent sees ALL skills with descriptions and decides which to run
+        # -- Step 3: LLM-driven skill selection → JSON --
         selected_skills = []
         if self.skills.list_names():
-            selection_result = self._cot_step_select_skills(message, analysis)
-            thinking_steps.append((L["cot_skill_select"], selection_result["raw"]))
-            selected_skills = selection_result["selected"]
+            selection = self._cot_step_select_skills(message, analysis)
+            thinking_steps.append((L["cot_skill_select"], selection["display"]))
+            selected_skills = selection["selected"]
 
         # -- Step 4: Execute selected skills --
         if selected_skills:
@@ -545,18 +576,20 @@ class AriaWebAgent:
                     output = result["stdout"][:1500]
                     skill_results[skill.name] = output
                     skills_used.append(skill.name)
+                    log.skill(skill.name, scripts[0].name, 0, output[:200])
                     thinking_steps.append((
                         f"{L['cot_skill']}: {skill.name}",
                         f"args={args}\nOutput: {output[:500]}"
                     ))
                 elif result.get("stderr") or result.get("error"):
                     err = result.get("stderr", result.get("error", ""))[:200]
+                    log.skill_error(skill.name, scripts[0].name, err)
                     thinking_steps.append((
                         f"{L['cot_skill']} ERROR: {skill.name}",
                         f"Error (args={args}): {err}"
                     ))
         else:
-            # Fallback: keyword-based matching (in case LLM said none but there's a match)
+            # Fallback: keyword-based matching
             all_relevant = self.skills.find_relevant(message)
             if all_relevant:
                 for skill in all_relevant[:2]:
@@ -568,32 +601,54 @@ class AriaWebAgent:
                             output = result["stdout"][:1500]
                             skill_results[skill.name] = output
                             skills_used.append(skill.name)
+                            log.skill(skill.name, scripts[0].name, 0, output[:200])
                             thinking_steps.append((
                                 f"{L['cot_skill']}: {skill.name}",
                                 f"args={args}\nOutput: {output[:500]}"
                             ))
 
-        # -- Step 5: Plan response (LLM call #3) --
+        # -- Step 5: Plan response → JSON --
         plan = self._cot_step_plan(message, analysis, thinking_steps, skill_results)
-        thinking_steps.append((L["cot_plan"], plan))
+        thinking_steps.append((L["cot_plan"],
+            json.dumps(plan, ensure_ascii=False, indent=2)))
 
-        # -- Step 6: Optional additional reasoning --
-        needs_more = self._cot_step_needs_more(message, plan, skill_results)
-        if needs_more:
-            thinking_steps.append((L["cot_interpret"], needs_more))
+        # -- Step 6: Interpret skill results → JSON (optional) --
+        interpretation = self._cot_step_interpret(message, skill_results)
+        if interpretation:
+            thinking_steps.append((L["cot_interpret"],
+                json.dumps(interpretation, ensure_ascii=False, indent=2)))
 
-        # -- Final: Generate answer (LLM call #3+) --
-        reply = self._cot_step_final_answer(message, thinking_steps, skill_results, memory_ctx)
+        # -- Check if agent can't answer → add to pending tasks --
+        task_notice = ""
+        if analysis.get("can_answer") is False and analysis.get("missing_capability"):
+            reason = analysis["missing_capability"]
+            task = self.memory.add_task(
+                user_message=message,
+                reason=reason,
+                needed_skill=reason,
+                interaction_n=self.interaction_count,
+            )
+            log.task("created", task["id"], f"reason={reason} msg={message[:80]}")
+            from core.prompts import T2_MSG
+            m = T2_MSG.get(get_lang(), T2_MSG["en"])
+            task_notice = "\n\n---\n" + m["task_cannot"].format(reason=reason)
+
+        # -- Final: Generate answer --
+        reply = self._cot_step_final_answer(
+            message, analysis, plan, skill_results, memory_ctx, interpretation)
         reply = self._strip_internal_tags(reply)
+        if task_notice:
+            reply += task_notice
 
-        # Build thinking text for UI
+        # Build thinking text for UI (display only)
         thinking_text = ""
         for label, content in thinking_steps:
             thinking_text += f"**{label}**\n{content}\n\n"
 
         skill_used = skills_used[0] if skills_used else None
+        log.agent(reply, self.interaction_count, skills_used)
 
-        # Store only brief response summary in memory
+        # Store brief response in memory
         self.memory.add(
             f"[Odpowiedz na: {message[:60]}] {reply[:140]}",
             category="agent_response", importance=0.3,
@@ -636,93 +691,118 @@ class AriaWebAgent:
         return {"type": "chat", "content": reply, "skill_used": None, "thinking": None}
 
     # =========================================
-    #  CHAIN OF THOUGHT -- Role-specific prompts
+    #  CHAIN OF THOUGHT -- JSON-structured reasoning
     # =========================================
 
-    def _cot_step_analyze(self, message: str) -> str:
+    def _parse_cot_json(self, raw: str) -> dict:
+        """Parse JSON from LLM CoT response. Robust against markdown fences and extra text."""
+        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+        raw = re.sub(r'\s*```\s*$', '', raw)
+        # Find first { ... } block
+        start = raw.find("{")
+        if start < 0:
+            return {}
+        depth = 0; in_str = False; esc = False; end = start
+        for i in range(start, len(raw)):
+            c = raw[i]
+            if esc: esc = False; continue
+            if c == '\\': esc = True; continue
+            if c == '"' and not esc: in_str = not in_str; continue
+            if in_str: continue
+            if c == '{': depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0: end = i + 1; break
+        if depth != 0:
+            return {}
+        try:
+            return json.loads(raw[start:end])
+        except json.JSONDecodeError:
+            try:
+                return json.loads(raw[start:end].replace("'", '"'))
+            except json.JSONDecodeError:
+                return {}
+
+    def _cot_step_analyze(self, message: str) -> dict:
+        """Step 1: Analyze query. Returns parsed JSON dict."""
         lang = get_lang()
         skills_list = ", ".join(self.skills.list_names()) or "none"
         prompt = COT_ANALYZE[lang].format(skills=skills_list, message=message)
         try:
             self.llm.set_system_prompt(COT_SYSTEM[lang])
-            result = self.llm.chat(prompt, include_history=False)
-            return self._strip_internal_tags(result)[:600]
-        except Exception:
-            return COT_FALLBACK_ANALYZE[lang]
+            raw = self.llm.chat(prompt, include_history=False)
+            result = self._parse_cot_json(raw)
+            if not result:
+                result = json.loads(COT_FALLBACK_ANALYZE[lang])
+            log.cot("analyze", result)
+            return result
+        except Exception as e:
+            log.error(f"CoT analyze failed: {e}")
+            return json.loads(COT_FALLBACK_ANALYZE[lang])
 
-    def _cot_step_select_skills(self, message: str, analysis: str) -> dict:
-        """Ask LLM which skills to use, given full skill descriptions.
-        Returns {raw: str, selected: [{name, args, reason}]}"""
+    def _cot_step_select_skills(self, message: str, analysis: dict) -> dict:
+        """Step 3: Ask LLM which skills to use. Returns {display: str, selected: [...]}."""
         lang = get_lang()
-
-        # Build detailed skill listing with descriptions and scripts
         skill_lines = []
         for skill in self.skills.skills.values():
             scripts = [s.name for s in skill.get_scripts()]
             scripts_str = ", ".join(scripts) or "(no scripts)"
             desc = skill.description or "(no description)"
-            instructions_preview = (skill.instructions or "")[:200]
+            errors = skill.get_recent_errors(3)
+            err_info = f"\n    Recent errors: {len(errors)}" if errors else ""
             skill_lines.append(
                 f"  - {skill.name}: {desc}\n"
-                f"    Scripts: {scripts_str}\n"
-                f"    Details: {instructions_preview}"
+                f"    Scripts: {scripts_str}{err_info}"
             )
-        skills_detail = "\n".join(skill_lines) if skill_lines else "(no skills installed)"
+        skills_detail = "\n".join(skill_lines) if skill_lines else "(no skills)"
 
+        analysis_str = json.dumps(analysis, ensure_ascii=False)[:400]
         prompt = COT_SKILL_SELECT[lang].format(
             skills_detail=skills_detail,
             message=message,
-            analysis=analysis[:400],
+            analysis=analysis_str,
         )
 
         try:
             self.llm.set_system_prompt(COT_SYSTEM[lang])
             raw = self.llm.chat(prompt, include_history=False)
-            raw = self._strip_internal_tags(raw)
+            parsed = self._parse_cot_json(raw)
         except Exception:
-            raw = COT_FALLBACK_SKILL_SELECT[lang]
+            parsed = json.loads(COT_FALLBACK_SKILL_SELECT[lang])
 
-        # Parse LLM response — extract USE: lines
         selected = []
-        for line in raw.split("\n"):
-            line = line.strip()
-            if not line.upper().startswith("USE:"):
+        for sel in parsed.get("selections", []):
+            name = sel.get("name", "").lower().strip()
+            if not name or name in ("none", "null"):
                 continue
-            # Parse: USE: skill-name | ARGS: a b c | REASON: why
-            parts = [p.strip() for p in line.split("|")]
-            name = parts[0].split(":", 1)[1].strip().lower()
-            if name in ("none", "zaden", "brak", ""):
-                continue
-            # Check skill actually exists
+            # Fuzzy match
             if not self.skills.get(name):
-                # Try fuzzy match
                 for sn in self.skills.list_names():
                     if name in sn or sn in name:
                         name = sn
                         break
                 else:
                     continue
+            args = sel.get("args", [])
+            if isinstance(args, str):
+                args = args.split() if args.lower() not in ("", "empty", "none") else []
+            selected.append({
+                "name": name,
+                "args": args,
+                "reason": sel.get("reason", ""),
+            })
 
-            args = []
-            reason = ""
-            for part in parts[1:]:
-                part_upper = part.upper()
-                if part_upper.startswith("ARGS:"):
-                    args_str = part.split(":", 1)[1].strip()
-                    if args_str.lower() not in ("(empty)", "empty", "", "brak", "none"):
-                        args = args_str.split()
-                elif part_upper.startswith("REASON:"):
-                    reason = part.split(":", 1)[1].strip()
+        display = json.dumps(parsed, ensure_ascii=False, indent=2)[:600]
+        log.cot("skill_select", {"selected": selected, "raw_len": len(display)})
+        return {"display": display, "selected": selected[:3]}
 
-            selected.append({"name": name, "args": args, "reason": reason})
-
-        return {"raw": raw[:600], "selected": selected[:3]}
-
-    def _cot_step_plan(self, message: str, analysis: str,
-                       steps: list, skill_results: dict) -> str:
+    def _cot_step_plan(self, message: str, analysis: dict,
+                       steps: list, skill_results: dict) -> dict:
+        """Step 5: Plan response. Returns parsed JSON dict."""
         lang = get_lang()
-        parts = [f"Query: \"{message}\"" if lang == "en" else f"Zapytanie: \"{message}\"",
-                 f"Analysis: {analysis[:300]}" if lang == "en" else f"Analiza: {analysis[:300]}"]
+        parts = [f"Query: \"{message}\"",
+                 f"Analysis: {json.dumps(analysis, ensure_ascii=False)[:300]}"]
         if skill_results:
             for name, output in skill_results.items():
                 parts.append(f"Skill {name}: {output[:300]}")
@@ -730,58 +810,70 @@ class AriaWebAgent:
         prompt = COT_PLAN[lang].format(context=context)
         try:
             self.llm.set_system_prompt(COT_SYSTEM[lang])
-            result = self.llm.chat(prompt, include_history=False)
-            return self._strip_internal_tags(result)[:600]
+            raw = self.llm.chat(prompt, include_history=False)
+            result = self._parse_cot_json(raw)
+            if not result:
+                result = json.loads(COT_FALLBACK_PLAN[lang])
+            log.cot("plan", result)
+            return result
         except Exception:
-            return COT_FALLBACK_PLAN[lang]
+            return json.loads(COT_FALLBACK_PLAN[lang])
 
-    def _cot_step_needs_more(self, message: str, plan: str,
-                             skill_results: dict) -> str:
-        lang = get_lang()
-        missing_key = "MISSING: nothing" if lang == "en" else "BRAKUJE: nic"
-        if missing_key.lower() in plan.lower():
-            return ""
+    def _cot_step_interpret(self, message: str, skill_results: dict) -> dict:
+        """Step 6: Interpret skill results. Returns parsed JSON dict or empty."""
         if not skill_results:
-            return ""
+            return {}
+        lang = get_lang()
         results_str = ""
         for name, output in skill_results.items():
             results_str += f"[{name}]: {output[:400]}\n"
         prompt = COT_INTERPRET[lang].format(message=message, results=results_str)
         try:
             self.llm.set_system_prompt(COT_SYSTEM[lang])
-            result = self.llm.chat(prompt, include_history=False)
-            return self._strip_internal_tags(result)[:400]
+            raw = self.llm.chat(prompt, include_history=False)
+            result = self._parse_cot_json(raw)
+            if result:
+                log.cot("interpret", result)
+            return result
         except Exception:
-            return ""
+            return {}
 
-    def _cot_step_final_answer(self, message: str, thinking_steps: list,
-                                skill_results: dict, memory_ctx: str) -> str:
+    def _cot_step_final_answer(self, message: str, analysis: dict,
+                                plan: dict, skill_results: dict,
+                                memory_ctx: str, interpretation: dict) -> str:
+        """Final step: Generate user-facing answer. Uses ONLY relevant data, no CoT artifacts."""
         lang = get_lang()
         budget = self.llm.get_context_budget()
         available = budget["user_msg_budget"]
 
         parts = []
+
+        # Skill results — raw data for LLM to reason about
         if skill_results:
             lbl = "Executed skill results:" if lang == "en" else "Wyniki uruchomionych umiejetnosci:"
             parts.append(lbl)
-            # Use up to 40% of available budget for skill outputs
-            skill_budget = available * 4 // 10  # in chars (~tokens*4)
+            skill_budget = available * 4 // 10
             for sname, sout in skill_results.items():
                 parts.append(f"[{sname}]:\n{sout[:skill_budget]}")
 
+        # Interpretation summary if available
+        if interpretation.get("summary"):
+            parts.append(f"Interpretation: {interpretation['summary'][:300]}")
+
+        # Memory context
         no_mem = "(no relevant memories)" if lang == "en" else "(brak powiazanych wspomnien)"
         if memory_ctx and memory_ctx != no_mem:
             lbl = "Memory context:" if lang == "en" else "Kontekst z pamieci:"
-            # Use up to 30% of available budget for memory
             mem_budget = available * 3 // 10 * 4
             parts.append(f"{lbl}\n{memory_ctx[:mem_budget]}")
 
-        for label, content in thinking_steps:
-            if "Plan" in label:
-                lbl = "Response plan:" if lang == "en" else "Plan odpowiedzi:"
-                parts.append(f"{lbl} {content[:600]}")
-                break
+        # Plan approach as brief guidance
+        approach = plan.get("approach", "")
+        if approach:
+            lbl = "Response strategy:" if lang == "en" else "Strategia odpowiedzi:"
+            parts.append(f"{lbl} {approach[:200]}")
 
+        # The actual user message
         parts.append(COT_FINAL[lang].format(message=message))
         enriched = "\n".join(parts)
 
@@ -793,6 +885,7 @@ class AriaWebAgent:
             self.llm.set_system_prompt(CHAT_SYSTEM[lang])
             return self.llm.chat(enriched)
         except Exception as e:
+            log.error(f"CoT final answer failed: {e}")
             return f"[Error: {e}]"
 
     def _trim_to_budget(self, text: str, max_tokens: int) -> str:
@@ -824,9 +917,19 @@ class AriaWebAgent:
         return args
 
     def _strip_internal_tags(self, text: str) -> str:
+        """Remove all internal reasoning artifacts from user-facing text."""
+        # XML-style tags
         text = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL)
         text = re.sub(r'<analysis>.*?</analysis>\s*', '', text, flags=re.DOTALL)
         text = re.sub(r'<plan>.*?</plan>\s*', '', text, flags=re.DOTALL)
+        # CoT label patterns that might leak into responses
+        text = re.sub(r'^(INTENCJA|INTENT|SKILLE?|SKILLS?|PAMIEC|MEMORY|TYP|TYPE|KLUCZ|KEY|FORMAT|BRAKUJE|MISSING):.*$',
+                       '', text, flags=re.MULTILINE)
+        # JSON blocks that are clearly CoT artifacts (contain "intent" or "key_info" keys)
+        text = re.sub(r'\{[^{}]*"(?:intent|key_info|approach|can_answer|response_type)"[^{}]*\}',
+                       '', text, flags=re.DOTALL)
+        # Clean up multiple blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
     # =========================================
@@ -972,6 +1075,8 @@ class AriaHandler(BaseHTTPRequestHandler):
             self._json_response(agent.llm.list_models())
         elif path == "/api/pending":
             self._json_response(agent.get_pending_messages())
+        elif path == "/api/tasks":
+            self._json_response(agent.memory.pending_tasks[-30:])
         elif path == "/api/events":
             self._handle_sse()
         else:

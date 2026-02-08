@@ -67,14 +67,14 @@ COT_SYSTEM = {
     "pl": (
         "Jestes wewnetrznym modulem rozumowania agenta ARIA. "
         "Twoje odpowiedzi to WEWNETRZNE notatki -- uzytkownik ich NIE widzi. "
-        "Pisz krotko, strukturalnie, w podanym formacie. "
-        "NIE generuj odpowiedzi dla uzytkownika -- tylko analize/plan."
+        "ZAWSZE odpowiadaj TYLKO poprawnym obiektem JSON -- nic wiecej. "
+        "NIE dodawaj tekstu przed ani po JSON. NIE uzywaj markdown."
     ),
     "en": (
         "You are the internal reasoning module of ARIA agent. "
         "Your responses are INTERNAL notes -- the user does NOT see them. "
-        "Write briefly, structurally, in the given format. "
-        "Do NOT generate user-facing answers -- only analysis/plan."
+        "ALWAYS respond with ONLY a valid JSON object -- nothing else. "
+        "Do NOT add text before or after JSON. Do NOT use markdown."
     ),
 }
 
@@ -85,7 +85,8 @@ CHAT_SYSTEM = {
         "Masz dostep do umiejetnosci (skilli) i pamieci z poprzednich rozmow. "
         "Jesli masz wyniki z uruchomionych skilli, wykorzystaj je w odpowiedzi. "
         "NIE wspominaj o wewnetrznym procesie rozumowania. "
-        "NIE uzywaj tagow XML, <think> ani formatowania wewnetrznego."
+        "NIE uzywaj tagow XML, <think>, formatowania wewnetrznego, JSON-ow, "
+        "ani etykiet jak INTENCJA/KLUCZ/FORMAT. Odpowiadaj naturalnie."
     ),
     "en": (
         "You are ARIA -- an intelligent AI agent. "
@@ -93,49 +94,60 @@ CHAT_SYSTEM = {
         "You have access to skills and memory from previous conversations. "
         "If you have results from executed skills, use them in your response. "
         "Do NOT mention the internal reasoning process. "
-        "Do NOT use XML tags, <think>, or internal formatting."
+        "Do NOT use XML tags, <think>, internal formatting, JSON, "
+        "or labels like INTENT/KEY/FORMAT. Respond naturally."
     ),
 }
 
 COT_ANALYZE = {
     "pl": (
-        "Przeanalizuj zapytanie. Odpowiedz TYLKO:\n"
-        "INTENCJA: co uzytkownik chce\n"
-        "SKILLE: ktore z [{skills}] moga pomoc, lub 'zaden'\n"
-        "PAMIEC: tak/nie\n"
-        "TYP: krotka/dluga/kod/lista/wyjasnienie\n\n"
-        "Zapytanie: \"{message}\""
+        'Przeanalizuj zapytanie uzytkownika. Odpowiedz TYLKO jako JSON:\n'
+        '{{"intent": "co uzytkownik chce", "skills": ["pasujace skille z: {skills}"], '
+        '"needs_memory": true/false, "response_type": "short|long|code|list|explanation", '
+        '"can_answer": true/false, "missing_capability": "czego brakuje lub null"}}\n\n'
+        'Zapytanie: "{message}"'
     ),
     "en": (
-        "Analyze the query. Respond ONLY:\n"
-        "INTENT: what user wants\n"
-        "SKILLS: which of [{skills}] can help, or 'none'\n"
-        "MEMORY: yes/no\n"
-        "TYPE: short/long/code/list/explanation\n\n"
-        "Query: \"{message}\""
+        'Analyze the user query. Respond ONLY as JSON:\n'
+        '{{"intent": "what user wants", "skills": ["matching skills from: {skills}"], '
+        '"needs_memory": true/false, "response_type": "short|long|code|list|explanation", '
+        '"can_answer": true/false, "missing_capability": "what is missing or null"}}\n\n'
+        'Query: "{message}"'
     ),
 }
 
 COT_PLAN = {
     "pl": (
-        "{context}\n\n"
-        "Zaplanuj odpowiedz. TYLKO:\n"
-        "KLUCZ: jakie informacje uwzglednic\n"
-        "FORMAT: jak przedstawic (prosto/technicznie/z przykladami)\n"
-        "BRAKUJE: czego brakuje, lub 'nic'"
+        '{context}\n\n'
+        'Zaplanuj odpowiedz. Odpowiedz TYLKO jako JSON:\n'
+        '{{"key_info": "jakie informacje uwzglednic", '
+        '"format": "prosto|technicznie|z_przykladami", '
+        '"missing": "czego brakuje lub null", '
+        '"approach": "krotki opis strategii odpowiedzi"}}'
     ),
     "en": (
-        "{context}\n\n"
-        "Plan the response. ONLY:\n"
-        "KEY: what information to include\n"
-        "FORMAT: how to present (simple/technical/with examples)\n"
-        "MISSING: what's missing, or 'nothing'"
+        '{context}\n\n'
+        'Plan the response. Respond ONLY as JSON:\n'
+        '{{"key_info": "what information to include", '
+        '"format": "simple|technical|with_examples", '
+        '"missing": "what is missing or null", '
+        '"approach": "brief description of response strategy"}}'
     ),
 }
 
 COT_INTERPRET = {
-    "pl": "Zinterpretuj wyniki skilli dla zapytania: \"{message}\"\n\nWyniki:\n{results}\nOdpowiedz w 2-3 zdaniach: co wynika z tych danych?",
-    "en": "Interpret skill results for query: \"{message}\"\n\nResults:\n{results}\nRespond in 2-3 sentences: what do these results tell us?",
+    "pl": (
+        'Zinterpretuj wyniki skilli dla zapytania: "{message}"\n\n'
+        'Wyniki:\n{results}\n\n'
+        'Odpowiedz TYLKO jako JSON:\n'
+        '{{"summary": "co wynika z danych (2-3 zdania)", "useful": true/false}}'
+    ),
+    "en": (
+        'Interpret skill results for query: "{message}"\n\n'
+        'Results:\n{results}\n\n'
+        'Respond ONLY as JSON:\n'
+        '{{"summary": "what the data tells us (2-3 sentences)", "useful": true/false}}'
+    ),
 }
 
 COT_FINAL = {
@@ -144,13 +156,13 @@ COT_FINAL = {
 }
 
 COT_FALLBACK_ANALYZE = {
-    "pl": "INTENCJA: nieznana\nSKILLE: zaden\nPAMIEC: nie\nTYP: krotka",
-    "en": "INTENT: unknown\nSKILLS: none\nMEMORY: no\nTYP: short",
+    "pl": '{"intent": "nieznana", "skills": [], "needs_memory": false, "response_type": "short", "can_answer": true, "missing_capability": null}',
+    "en": '{"intent": "unknown", "skills": [], "needs_memory": false, "response_type": "short", "can_answer": true, "missing_capability": null}',
 }
 
 COT_FALLBACK_PLAN = {
-    "pl": "KLUCZ: odpowiedz bezposrednio\nFORMAT: prosto\nBRAKUJE: nic",
-    "en": "KEY: answer directly\nFORMAT: simple\nMISSING: nothing",
+    "pl": '{"key_info": "odpowiedz bezposrednio", "format": "prosto", "missing": null, "approach": "bezposrednia odpowiedz"}',
+    "en": '{"key_info": "answer directly", "format": "simple", "missing": null, "approach": "direct answer"}',
 }
 
 COT_SKILL_SELECT = {
@@ -159,30 +171,26 @@ COT_SKILL_SELECT = {
         "{skills_detail}\n\n"
         "Zadanie uzytkownika: \"{message}\"\n"
         "Analiza: {analysis}\n\n"
-        "Ktore skille powinienem uruchomic, zeby najlepiej odpowiedziec na to zadanie?\n"
-        "Odpowiedz TYLKO w formacie (jeden skill na linie, max 3):\n"
-        "USE: <nazwa-skilla> | ARGS: <arg1> <arg2> | REASON: krotkie uzasadnienie\n"
-        "USE: none | REASON: uzasadnienie\n\n"
-        "Jesli zaden skill nie pasuje, napisz: USE: none | REASON: ...\n"
-        "Jesli skill nie wymaga argumentow, napisz: ARGS: (empty)"
+        "Ktore skille powinienem uruchomic?\n"
+        "Odpowiedz TYLKO jako JSON:\n"
+        "{{\"selections\": [{{\"name\": \"skill-name\", \"args\": [\"arg1\"], \"reason\": \"dlaczego\"}}]}}\n"
+        "Jesli zaden nie pasuje: {{\"selections\": [], \"reason\": \"dlaczego zaden\"}}"
     ),
     "en": (
         "My available skills:\n"
         "{skills_detail}\n\n"
         "User task: \"{message}\"\n"
         "Analysis: {analysis}\n\n"
-        "Which skills should I run to best answer this task?\n"
-        "Respond ONLY in this format (one skill per line, max 3):\n"
-        "USE: <skill-name> | ARGS: <arg1> <arg2> | REASON: brief justification\n"
-        "USE: none | REASON: justification\n\n"
-        "If no skill fits, write: USE: none | REASON: ...\n"
-        "If skill needs no arguments, write: ARGS: (empty)"
+        "Which skills should I run?\n"
+        "Respond ONLY as JSON:\n"
+        "{{\"selections\": [{{\"name\": \"skill-name\", \"args\": [\"arg1\"], \"reason\": \"why\"}}]}}\n"
+        "If none fits: {{\"selections\": [], \"reason\": \"why none\"}}"
     ),
 }
 
 COT_FALLBACK_SKILL_SELECT = {
-    "pl": "USE: none | REASON: brak pasujacych skilli",
-    "en": "USE: none | REASON: no matching skills",
+    "pl": '{"selections": [], "reason": "brak pasujacych skilli"}',
+    "en": '{"selections": [], "reason": "no matching skills"}',
 }
 
 
@@ -420,6 +428,12 @@ T2_MSG = {
         "proactive_skill": "Stworzylem nowa umiejetnosc: **{name}** -- {desc}\nMozesz ja uruchomic: `/run {name}`",
         "proactive_proposals": "Mam pomysly na nowe umiejetnosci:\n{list}",
         "proposal_keywords": ["proponuje", "warto", "przydatny", "stworzyc"],
+        "task_cannot": "Nie moge teraz wykonac tego zadania -- brakuje mi umiejetnosci: {reason}. Dodam to do listy zadan i sprobuje jak bede gotowy.",
+        "task_completed": "Wykonalem wczesniej odlozone zadanie!\n**Zadanie:** {message}\n**Wynik:** {result}",
+        "task_attempting": "[T2] Probuje wykonac zaległe zadanie: {message}",
+        "task_failed": "[T2] Nie udalo sie wykonac zadania: {reason}",
+        "proactive_greeting": "{message}",
+        "errors_cleared": "[T2] Wyczyszczono log bledow po naprawie: {name}",
     },
     "en": {
         "cycle": "--- Cycle {n} | {phase} ---",
@@ -452,7 +466,59 @@ T2_MSG = {
         "proactive_skill": "I created a new skill: **{name}** -- {desc}\nYou can run it: `/run {name}`",
         "proactive_proposals": "I have ideas for new skills:\n{list}",
         "proposal_keywords": ["propose", "useful", "create", "should"],
+        "task_cannot": "I can't complete this task right now -- missing capability: {reason}. I'll add it to my task list and try when ready.",
+        "task_completed": "I completed a previously deferred task!\n**Task:** {message}\n**Result:** {result}",
+        "task_attempting": "[T2] Attempting pending task: {message}",
+        "task_failed": "[T2] Failed to complete task: {reason}",
+        "proactive_greeting": "{message}",
+        "errors_cleared": "[T2] Cleared error log after fix: {name}",
     },
+}
+
+
+# --- Thread 2: Task checking prompt ---
+T2_TASK_CHECK = {
+    "pl": (
+        "Mam zaległe zadania od uzytkownika:\n{tasks}\n\n"
+        "Moje aktualne umiejetnosci: {skills_list}\n\n"
+        "Czy moge teraz wykonac ktores z tych zadan? Odpowiedz TYLKO JSON:\n"
+        "{{\"actionable\": [{{\"task_id\": \"...\", \"approach\": \"jak wykonac\", "
+        "\"skill\": \"nazwa-skilla lub null\", \"args\": []}}], "
+        "\"not_ready\": [{{\"task_id\": \"...\", \"reason\": \"dlaczego nie\"}}]}}"
+    ),
+    "en": (
+        "I have pending tasks from the user:\n{tasks}\n\n"
+        "My current skills: {skills_list}\n\n"
+        "Can I complete any of these tasks now? Respond ONLY JSON:\n"
+        "{{\"actionable\": [{{\"task_id\": \"...\", \"approach\": \"how to do it\", "
+        "\"skill\": \"skill-name or null\", \"args\": []}}], "
+        "\"not_ready\": [{{\"task_id\": \"...\", \"reason\": \"why not\"}}]}}"
+    ),
+}
+
+T2_PROACTIVE = {
+    "pl": (
+        "Jestes ARIA Thread 2. Uzytkownik moze nie rozmawiac, ale ty dzialasz w tle.\n"
+        "Ostatnie interakcje:\n{recent}\n"
+        "Twoje skille: {skills_list}\n"
+        "Kontekst: cykl {cycle}, czas od ostatniej interakcji: {idle_time}\n\n"
+        "Czy masz cos ciekawego do powiedzenia uzytkownikowi? "
+        "Moze informacje z uruchomionych skilli, spostrze\u017cenie, lub pytanie.\n"
+        "Odpowiedz TYLKO JSON:\n"
+        "{{\"should_message\": true/false, \"message\": \"tresc wiadomosci lub null\", "
+        "\"reason\": \"dlaczego tak/nie\"}}"
+    ),
+    "en": (
+        "You are ARIA Thread 2. The user may not be chatting, but you work in background.\n"
+        "Recent interactions:\n{recent}\n"
+        "Your skills: {skills_list}\n"
+        "Context: cycle {cycle}, time since last interaction: {idle_time}\n\n"
+        "Do you have something interesting to tell the user? "
+        "Maybe info from skills, an observation, or a question.\n"
+        "Respond ONLY JSON:\n"
+        "{{\"should_message\": true/false, \"message\": \"message text or null\", "
+        "\"reason\": \"why yes/no\"}}"
+    ),
 }
 
 
@@ -484,6 +550,7 @@ CMD_DESC = {
         "/model <n>": "Zmien aktywny model",
         "/pull [model]": "Pobierz model z Ollama",
         "/ollama": "Status polaczenia Ollama",
+        "/tasks": "Lista zadan do wykonania",
     },
     "en": {
         "/help": "List commands",
@@ -508,6 +575,7 @@ CMD_DESC = {
         "/model <n>": "Change active model",
         "/pull [model]": "Pull model from Ollama",
         "/ollama": "Ollama connection status",
+        "/tasks": "Pending tasks list",
     },
 }
 

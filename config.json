@@ -6,16 +6,16 @@
         "max_tokens": 4096,
         "context_length": "auto",
         "api_type": "ollama",
-        "timeout": 120
+        "timeout": 300
     },
     "reflection_llm": {
         "base_url": "http://host.docker.internal:11434",
         "model": "codegemma:latest",
         "temperature": 0.9,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "context_length": "auto",
         "api_type": "ollama",
-        "timeout": 60
+        "timeout": 180
     },
     "agent": {
         "reflection_interval": 3,

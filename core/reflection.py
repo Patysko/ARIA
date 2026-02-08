@@ -1,6 +1,11 @@
 """
 Reflection Thread for ARIA -- TRUE BACKGROUND THREAD.
 All strings via core.prompts for PL/EN support.
+
+Phases:
+- introspection, pattern_analysis, skill_planning, skill_building,
+  skill_testing, self_improvement, knowledge_synthesis, exploration,
+  task_processing, proactive_messaging
 """
 
 import json
@@ -12,14 +17,16 @@ from collections import Counter
 from typing import Optional
 
 from core.computer import ComputerTools
+from core.logger import log
 from core.prompts import (
     get_lang, T2_SYSTEM, T2_BUILD, T2_FIX, T2_THINK,
-    T2_PHASE_INSTRUCTIONS, T2_MSG,
+    T2_PHASE_INSTRUCTIONS, T2_MSG, T2_TASK_CHECK, T2_PROACTIVE,
 )
 
 PHASES = [
     "introspection", "pattern_analysis", "skill_planning", "skill_building",
     "skill_testing", "self_improvement", "knowledge_synthesis", "exploration",
+    "task_processing", "proactive_messaging",
 ]
 
 MAX_FIX_ATTEMPTS = 2
@@ -114,6 +121,7 @@ class ReflectionThread:
         phase = PHASES[self._phase_index]
         self._phase_index = (self._phase_index + 1) % len(PHASES)
         self._emit(self._m["cycle"].format(n=self._cycle_count, phase=phase))
+        log.thread2(phase, f"Cycle {self._cycle_count} starting")
 
         if not self._llm:
             thoughts = self._rule_based(phase)
@@ -121,6 +129,10 @@ class ReflectionThread:
             thoughts = self._phase_build()
         elif phase == "skill_testing":
             thoughts = self._phase_test()
+        elif phase == "task_processing":
+            thoughts = self._phase_tasks()
+        elif phase == "proactive_messaging":
+            thoughts = self._phase_proactive()
         else:
             thoughts = self._phase_think(phase)
 
@@ -131,6 +143,7 @@ class ReflectionThread:
             "stats": self.memory.get_stats(),
             "skills_count": len(self.skills.list_names()),
         })
+        log.thread2(phase, f"Cycle {self._cycle_count} done, {len(thoughts)} thoughts")
 
     # --- Skill building ---
 
@@ -209,6 +222,7 @@ class ReflectionThread:
         )
         self.memory.add_episodic(f"Created skill: {name}", "Thread 2")
         self._emit_to_user(m["proactive_skill"].format(name=name, desc=sd.get("description", "")))
+        log.thread2("skill_building", f"Created skill: {name}")
 
         self.self_model["skills_created"] = len(self.skills.list_names())
         self.self_model["improvements_applied"] = self.self_model.get("improvements_applied", 0) + 1
@@ -238,9 +252,15 @@ class ReflectionThread:
                         att = self._fix_attempts.get(fk, 0)
                         if att < MAX_FIX_ATTEMPTS:
                             self._emit(m["fixing"].format(key=fk, n=att + 1, max=MAX_FIX_ATTEMPTS))
-                            thoughts.append(self._fix_skill(skill, sp.name, sp.read_text(errors="replace"), r["error"]))
+                            fix_result = self._fix_skill(skill, sp.name, sp.read_text(errors="replace"), r["error"])
+                            thoughts.append(fix_result)
                             self._fix_attempts[fk] = att + 1
                             fixed += 1
+                            # Clear error log if fix succeeded
+                            if "NAPRAWIONO" in fix_result or "FIXED" in fix_result:
+                                skill.clear_errors()
+                                self._emit(m["errors_cleared"].format(name=sn))
+                                log.thread2("skill_testing", f"Cleared error log: {sn}")
                         else:
                             self._emit(m["fix_skip"].format(key=fk))
                     else:
@@ -249,6 +269,7 @@ class ReflectionThread:
         msg = m["test_summary"].format(tested=tested, fixed=fixed)
         thoughts.append(msg)
         self._emit(f"[T2] {msg}")
+        log.thread2("skill_testing", msg)
         return thoughts
 
     # --- Helpers ---
@@ -397,6 +418,155 @@ class ReflectionThread:
         except Exception as e:
             return [m["llm_error"].format(e=e)]
 
+    # --- Task processing phase ---
+
+    def _phase_tasks(self) -> list[str]:
+        """Check pending tasks and attempt to complete any that are now possible."""
+        m = self._m
+        thoughts = []
+        pending = self.memory.get_pending_tasks()
+
+        if not pending:
+            thoughts.append("[T2] No pending tasks")
+            return thoughts
+
+        lang = get_lang()
+
+        # Ask LLM which tasks are actionable now
+        tasks_desc = "\n".join(
+            f"  - id={t['id']} | msg=\"{t['message'][:100]}\" | reason={t['reason']} | attempts={t['attempts']}"
+            for t in pending[:10]
+        )
+        skills_list = ", ".join(self.skills.list_names()) or "none"
+
+        try:
+            self._llm.set_system_prompt(T2_SYSTEM[lang])
+            raw = self._llm.chat(
+                T2_TASK_CHECK[lang].format(tasks=tasks_desc, skills_list=skills_list),
+                include_history=False,
+            )
+            parsed = self._extract_json(raw)
+        except Exception as e:
+            log.error(f"T2 task check failed: {e}")
+            return [m["llm_error"].format(e=e)]
+
+        if not parsed:
+            return ["[T2] Could not parse task check response"]
+
+        for item in parsed.get("actionable", []):
+            task_id = item.get("task_id", "")
+            task = next((t for t in pending if t["id"] == task_id), None)
+            if not task:
+                continue
+            if task["attempts"] >= 3:
+                self.memory.mark_task(task_id, "failed", "max attempts")
+                log.task("failed", task_id, "max attempts reached")
+                continue
+
+            self._emit(m["task_attempting"].format(message=task["message"][:80]))
+            self.memory.increment_task_attempt(task_id)
+            log.task("attempting", task_id, task["message"][:100])
+
+            # Try to execute the task
+            skill_name = item.get("skill")
+            args = item.get("args", [])
+            result_text = ""
+
+            if skill_name and self.skills.get(skill_name):
+                skill = self.skills.get(skill_name)
+                scripts = [s for s in skill.get_scripts() if s.suffix == ".py"]
+                if scripts:
+                    r = skill.run_script(scripts[0].name, args=args)
+                    if r.get("returncode", 1) == 0 and r.get("stdout"):
+                        result_text = r["stdout"][:500]
+                    else:
+                        err = r.get("stderr", r.get("error", ""))[:200]
+                        self._emit(m["task_failed"].format(reason=err))
+                        thoughts.append(m["task_failed"].format(reason=err))
+                        log.task("failed", task_id, err)
+                        continue
+
+            if not result_text and self._llm:
+                # Try direct LLM answer
+                try:
+                    from core.prompts import CHAT_SYSTEM
+                    self._llm.set_system_prompt(CHAT_SYSTEM[lang])
+                    result_text = self._llm.chat(
+                        f"Earlier the user asked: \"{task['message']}\"\n"
+                        f"I couldn't help then because: {task['reason']}\n"
+                        f"Now I have skills: {skills_list}\n"
+                        f"Please answer the user's original question.",
+                        include_history=False,
+                    )
+                except Exception as e:
+                    log.error(f"T2 task LLM failed: {e}")
+                    continue
+
+            if result_text:
+                self.memory.mark_task(task_id, "done", result_text[:300])
+                # Send result to user!
+                user_msg = m["task_completed"].format(
+                    message=task["message"][:100],
+                    result=result_text[:300],
+                )
+                self._emit_to_user(user_msg)
+                thoughts.append(f"✅ Completed task: {task['message'][:80]}")
+                log.task("completed", task_id, result_text[:200])
+
+        # Clean up old tasks
+        self.memory.cleanup_tasks(max_age_hours=48)
+        thoughts.append(f"[T2] Processed {len(pending)} pending tasks")
+        return thoughts
+
+    # --- Proactive messaging phase ---
+
+    def _phase_proactive(self) -> list[str]:
+        """Decide whether to proactively message the user."""
+        m = self._m
+        thoughts = []
+        lang = get_lang()
+        ctx = self._build_context()
+
+        # Calculate idle time
+        last_interaction = 0
+        for entry in reversed(self.memory.short_term):
+            if entry.metadata.get("type") == "user_input":
+                last_interaction = entry.timestamp
+                break
+        idle_secs = time.time() - last_interaction if last_interaction else 9999
+        idle_str = f"{int(idle_secs // 60)}m" if idle_secs < 3600 else f"{idle_secs // 3600:.1f}h"
+
+        # Don't spam — only message every few cycles
+        if self._cycle_count % 3 != 0 and idle_secs < 300:
+            return ["[T2] Too soon for proactive message"]
+
+        try:
+            self._llm.set_system_prompt(T2_SYSTEM[lang])
+            raw = self._llm.chat(
+                T2_PROACTIVE[lang].format(
+                    recent=ctx["recent"],
+                    skills_list=ctx["skills_list"],
+                    cycle=self._cycle_count,
+                    idle_time=idle_str,
+                ),
+                include_history=False,
+            )
+            parsed = self._extract_json(raw)
+        except Exception as e:
+            return [m["llm_error"].format(e=e)]
+
+        if parsed and parsed.get("should_message") and parsed.get("message"):
+            msg_text = parsed["message"]
+            reason = parsed.get("reason", "")
+            self._emit(f"[T2] Proactive: {reason[:100]}")
+            self._emit_to_user(m["proactive_greeting"].format(message=msg_text))
+            thoughts.append(f"Sent proactive message: {msg_text[:100]}")
+            log.thread2("proactive", f"Sent: {msg_text[:200]}")
+        else:
+            thoughts.append("[T2] No proactive message needed")
+
+        return thoughts
+
     def _rule_based(self, phase):
         thoughts = []
         stats = self.memory.get_stats()
@@ -444,6 +614,7 @@ class ReflectionThread:
     # --- Emit ---
 
     def _emit(self, msg):
+        log.debug(f"T2_THOUGHT: {msg[:200]}")
         if self.on_thought:
             try:
                 self.on_thought(msg)
@@ -451,6 +622,7 @@ class ReflectionThread:
                 pass
 
     def _emit_to_user(self, msg):
+        log.thread2_to_user(msg)
         if self.on_user_message:
             try:
                 self.on_user_message(msg)
@@ -525,9 +697,12 @@ class ReflectionThread:
         phase = PHASES[self._phase_index]
         self._phase_index = (self._phase_index + 1) % len(PHASES)
         self._cycle_count += 1
+        log.thread2(phase, f"Manual reflect, cycle {self._cycle_count}")
         if not self._llm: return self._rule_based(phase)
         if phase == "skill_building": return self._phase_build()
         if phase == "skill_testing": return self._phase_test()
+        if phase == "task_processing": return self._phase_tasks()
+        if phase == "proactive_messaging": return self._phase_proactive()
         return self._phase_think(phase)
 
     def get_last_reflections(self, n=3):

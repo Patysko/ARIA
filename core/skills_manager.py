@@ -54,6 +54,7 @@ class Skill:
         self.use_count = 0
         self.last_used = None
         self.created_at = None
+        self.error_log: list[dict] = []  # Recent errors, cleared after fix
 
         if self.skill_md.exists():
             content = self.skill_md.read_text()
@@ -69,6 +70,7 @@ class Skill:
                 self.use_count = stats.get("use_count", 0)
                 self.last_used = stats.get("last_used")
                 self.created_at = stats.get("created_at")
+                self.error_log = stats.get("error_log", [])
             except json.JSONDecodeError:
                 pass
 
@@ -78,6 +80,7 @@ class Skill:
             "use_count": self.use_count,
             "last_used": self.last_used,
             "created_at": self.created_at or time.time(),
+            "error_log": self.error_log[-20:],  # keep last 20
         }))
 
     def use(self):
@@ -119,15 +122,44 @@ class Skill:
                 cwd=str(self.path)
             )
             self.use()
-            return {
+            r = {
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "returncode": result.returncode,
             }
+            # Log errors
+            if result.returncode != 0:
+                self.log_error(script_name, result.stderr or result.stdout, args)
+            return r
         except subprocess.TimeoutExpired:
-            return {"error": "Timeout (30s)"}
+            err = "Timeout (30s)"
+            self.log_error(script_name, err, args)
+            return {"error": err}
         except Exception as e:
+            self.log_error(script_name, str(e), args)
             return {"error": str(e)}
+
+    def log_error(self, script_name: str, error: str, args: list = None):
+        """Record an error for this skill."""
+        self.error_log.append({
+            "script": script_name,
+            "error": error[:500],
+            "args": args or [],
+            "timestamp": time.time(),
+        })
+        # Keep bounded
+        if len(self.error_log) > 20:
+            self.error_log = self.error_log[-20:]
+        self.save_stats()
+
+    def clear_errors(self):
+        """Clear error log (called after successful fix cycle)."""
+        self.error_log = []
+        self.save_stats()
+
+    def get_recent_errors(self, n: int = 5) -> list[dict]:
+        """Get last N errors."""
+        return self.error_log[-n:]
 
     def to_dict(self) -> dict:
         return {
@@ -139,6 +171,8 @@ class Skill:
             "use_count": self.use_count,
             "last_used": self.last_used,
             "created_at": self.created_at,
+            "error_count": len(self.error_log),
+            "recent_errors": self.error_log[-3:],
         }
 
 

@@ -220,6 +220,7 @@ const COMMANDS_I18N = {
     { cmd: '/models', desc: 'Lista modeli Ollama', args: '' },
     { cmd: '/model', desc: 'Zmień model (auto-pull)', args: '<nazwa>' },
     { cmd: '/ollama', desc: 'Status połączenia Ollama', args: '' },
+    { cmd: '/tasks', desc: 'Lista zadań do wykonania', args: '' },
   ],
   en: [
     { cmd: '/help', desc: 'List commands', args: '' },
@@ -243,6 +244,7 @@ const COMMANDS_I18N = {
     { cmd: '/models', desc: 'List Ollama models', args: '' },
     { cmd: '/model', desc: 'Change model (auto-pull)', args: '<name>' },
     { cmd: '/ollama', desc: 'Ollama connection status', args: '' },
+    { cmd: '/tasks', desc: 'Pending tasks list', args: '' },
   ],
 };
 
@@ -822,7 +824,7 @@ function App() {
             role: m.role,
             content: m.content,
             is_command: m.is_command,
-            type: m.is_command ? 'command' : undefined,
+            type: m.is_command ? 'command' : m.is_proactive ? 'proactive' : undefined,
             skill_used: m.skill_used,
             thinking: m.thinking,
           })));

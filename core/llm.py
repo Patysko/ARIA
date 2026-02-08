@@ -231,9 +231,19 @@ class LLMClient:
                 "num_ctx": self.context_length,
             },
         }
+        # Non-streaming needs longer timeout — model generates all tokens before responding
+        # Rough: ~20 tokens/sec on CPU → 4096 tokens ≈ 200s
+        gen_timeout = max(self.timeout, (self.max_tokens // 15) + 30)
         try:
-            data = self._post(f"{self.base_url}/api/chat", payload)
+            data = self._post(f"{self.base_url}/api/chat", payload,
+                              timeout=gen_timeout)
             content = data.get("message", {}).get("content", "")
+
+            # Check if response was truncated by token limit
+            done_reason = data.get("done_reason", "")
+            if done_reason == "length":
+                content += "\n\n⚠️ [Response truncated — token limit reached]"
+
             self.add_to_history("user", messages[-1]["content"])
             self.add_to_history("assistant", content)
             return content
@@ -254,6 +264,7 @@ class LLMClient:
             },
         }
         full_response = ""
+        truncated = False
         try:
             req = urllib.request.Request(
                 f"{self.base_url}/api/chat",
@@ -261,7 +272,14 @@ class LLMClient:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            # Use a short connection timeout, but set socket timeout high
+            # so streaming doesn't get killed mid-generation
+            import socket
+            resp = urllib.request.urlopen(req, timeout=30)  # 30s to connect
+            # Set socket read timeout per-chunk: 120s between chunks
+            # (model thinking can take time before first token)
+            resp.fp.raw._sock.settimeout(max(120, self.timeout))
+            try:
                 for line in resp:
                     if line:
                         try:
@@ -270,13 +288,31 @@ class LLMClient:
                             if token:
                                 full_response += token
                                 yield token
+                            # Check for end of generation
+                            if chunk.get("done"):
+                                if chunk.get("done_reason") == "length":
+                                    truncated = True
+                                break
                         except json.JSONDecodeError:
                             continue
+            finally:
+                resp.close()
+
+            if truncated:
+                yield "\n\n⚠️ [Response truncated — token limit reached]"
 
             self.add_to_history("user", messages[-1]["content"])
             self.add_to_history("assistant", full_response)
         except urllib.error.HTTPError as e:
             yield self._handle_http_error(e, "stream")
+        except socket.timeout:
+            # Socket timeout between chunks — model stalled
+            if full_response:
+                yield "\n\n⚠️ [Response interrupted — generation timeout]"
+                self.add_to_history("user", messages[-1]["content"])
+                self.add_to_history("assistant", full_response)
+            else:
+                yield "\n[LLM Error] Timeout waiting for response"
         except Exception as e:
             yield f"\n[LLM Error] {e}"
 
@@ -365,14 +401,14 @@ class LLMClient:
 
     # —— Utility ——
 
-    def _post(self, url: str, payload: dict) -> dict:
+    def _post(self, url: str, payload: dict, timeout: int = None) -> dict:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url, data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def list_models(self) -> list[str]:

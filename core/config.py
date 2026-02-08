@@ -9,9 +9,12 @@ class Config:
     BASE_DIR = Path(__file__).parent.parent
     SKILLS_DIR = BASE_DIR / "skills"
     MEMORY_DIR = BASE_DIR / "memory"
+    LOG_DIR = MEMORY_DIR / "logs"
     MEMORY_FILE = MEMORY_DIR / "memory.json"
     REFLECTION_LOG = MEMORY_DIR / "reflections.jsonl"
     SELF_MODEL_FILE = MEMORY_DIR / "self_model.json"
+    PENDING_TASKS_FILE = MEMORY_DIR / "pending_tasks.json"
+    SKILL_ERRORS_FILE = MEMORY_DIR / "skill_errors.json"
     CONFIG_FILE = BASE_DIR / "config.json"
 
     SHORT_TERM_LIMIT = 20
@@ -30,17 +33,17 @@ class Config:
         "max_tokens": 4096,
         "context_length": "auto",   # "auto" = detect from Ollama API, or int
         "api_type": "ollama",
-        "timeout": 120,
+        "timeout": 300,
     }
 
     REFLECTION_LLM_CONFIG = {
         "base_url": "http://host.docker.internal:11434",
         "model": "codegemma:latest",
         "temperature": 0.9,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "context_length": "auto",
         "api_type": "ollama",
-        "timeout": 60,
+        "timeout": 180,
     }
 
     STREAM_RESPONSES = True
@@ -51,6 +54,7 @@ class Config:
     def __init__(self):
         self.SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         self.MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
         self._load_config_file()
         # Env var overrides config.json
         env_lang = os.environ.get("ARIA_LANG", "").lower().strip()
@@ -58,6 +62,9 @@ class Config:
             self.LANGUAGE = env_lang
         # Also set it in os.environ so prompts.get_lang() can read it
         os.environ["ARIA_LANG"] = self.LANGUAGE
+        # Init central logger
+        from core.logger import log
+        log.init(self.LOG_DIR)
 
     def _load_config_file(self):
         if not self.CONFIG_FILE.exists():

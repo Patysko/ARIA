@@ -92,8 +92,10 @@ class CompressedMemory:
         self.short_term: list[MemoryEntry] = []
         self.long_term: list[CompressedBlock] = []
         self.episodic: list[dict] = []  # Key moments
+        self.pending_tasks: list[dict] = []  # Tasks user asked but agent couldn't complete
         self.compression_count = 0
         self._load()
+        self._load_tasks()
 
     def _load(self):
         """Load memory from disk."""
@@ -108,6 +110,15 @@ class CompressedMemory:
             except (json.JSONDecodeError, KeyError):
                 pass
 
+    def _load_tasks(self):
+        """Load pending tasks from disk."""
+        path = self.config.PENDING_TASKS_FILE
+        if path.exists():
+            try:
+                self.pending_tasks = json.loads(path.read_text())
+            except (json.JSONDecodeError, KeyError):
+                self.pending_tasks = []
+
     def save(self):
         """Persist memory to disk."""
         data = {
@@ -117,6 +128,63 @@ class CompressedMemory:
             "compression_count": self.compression_count,
         }
         self.config.MEMORY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        self._save_tasks()
+
+    def _save_tasks(self):
+        """Persist pending tasks."""
+        self.config.PENDING_TASKS_FILE.write_text(
+            json.dumps(self.pending_tasks, ensure_ascii=False, indent=2)
+        )
+
+    # --- Pending tasks ---
+
+    def add_task(self, user_message: str, reason: str,
+                 needed_skill: str = "", interaction_n: int = 0) -> dict:
+        """Add a task that couldn't be completed."""
+        task = {
+            "id": f"task-{int(time.time())}-{len(self.pending_tasks)}",
+            "message": user_message,
+            "reason": reason,
+            "needed_skill": needed_skill,
+            "created_at": time.time(),
+            "attempts": 0,
+            "status": "pending",  # pending | in_progress | done | failed
+            "interaction_n": interaction_n,
+        }
+        self.pending_tasks.append(task)
+        self._save_tasks()
+        return task
+
+    def get_pending_tasks(self) -> list[dict]:
+        """Get all pending tasks."""
+        return [t for t in self.pending_tasks if t["status"] == "pending"]
+
+    def mark_task(self, task_id: str, status: str, result: str = ""):
+        """Mark a task as done/failed."""
+        for t in self.pending_tasks:
+            if t["id"] == task_id:
+                t["status"] = status
+                t["completed_at"] = time.time()
+                t["result"] = result[:500]
+                t["attempts"] = t.get("attempts", 0) + 1
+                break
+        self._save_tasks()
+
+    def increment_task_attempt(self, task_id: str):
+        for t in self.pending_tasks:
+            if t["id"] == task_id:
+                t["attempts"] = t.get("attempts", 0) + 1
+                break
+        self._save_tasks()
+
+    def cleanup_tasks(self, max_age_hours: float = 24):
+        """Remove old completed/failed tasks."""
+        cutoff = time.time() - max_age_hours * 3600
+        self.pending_tasks = [
+            t for t in self.pending_tasks
+            if t["status"] == "pending" or t.get("completed_at", 0) > cutoff
+        ]
+        self._save_tasks()
 
     @staticmethod
     def should_memorize(content: str, category: str = "general",
@@ -329,7 +397,10 @@ class CompressedMemory:
                     parts.append(line)
                     used_tokens += line_tokens
 
-        return "\n".join(parts) if parts else "(brak powiazanych wspomnien)"
+        if parts:
+            return "\n".join(parts)
+        from core.prompts import get_lang, MEM
+        return MEM.get(get_lang(), MEM["en"])["no_relevant"]
 
     def get_stats(self) -> dict:
         return {
@@ -337,6 +408,7 @@ class CompressedMemory:
             "long_term_count": len(self.long_term),
             "episodic_count": len(self.episodic),
             "compression_count": self.compression_count,
+            "pending_tasks_count": len(self.get_pending_tasks()),
             "categories": list(set(
                 [e.category for e in self.short_term] +
                 [b.category for b in self.long_term]
@@ -345,27 +417,31 @@ class CompressedMemory:
 
     def get_context_summary(self, max_tokens: int = 800) -> str:
         """Get a compact memory summary for the agent's system prompt.
-
         Budget-aware: stays within max_tokens.
         """
+        from core.prompts import get_lang, MEM
+        lang = get_lang()
+        m = MEM.get(lang, MEM["en"])
+
         stats = self.get_stats()
         lines = [
-            f"Pamięć: {stats['short_term_count']} krótkoterminowych, "
-            f"{stats['long_term_count']} skompresowanych, "
-            f"{stats['episodic_count']} epizodycznych",
+            m["memory_stats"].format(
+                st=stats['short_term_count'],
+                lt=stats['long_term_count'],
+                ep=stats['episodic_count'],
+            ),
         ]
         used = len(lines[0]) // 4
 
         if stats["categories"]:
-            cat_line = f"Kategorie: {', '.join(stats['categories'][:8])}"
+            cat_line = m["categories_label"] + ', '.join(stats['categories'][:8])
             used += len(cat_line) // 4
             lines.append(cat_line)
 
-        # Include recent short-term, sorted by importance
         if self.short_term:
             recent = sorted(self.short_term[-10:],
                             key=lambda e: e.importance, reverse=True)
-            lines.append("--- Ostatnie ważne wspomnienia ---")
+            lines.append(m["recent_label"])
             for entry in recent[:5]:
                 content = entry.content[:100]
                 line = f"  [{entry.category}] {content}"
