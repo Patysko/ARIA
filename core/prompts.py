@@ -153,6 +153,38 @@ COT_FALLBACK_PLAN = {
     "en": "KEY: answer directly\nFORMAT: simple\nMISSING: nothing",
 }
 
+COT_SKILL_SELECT = {
+    "pl": (
+        "Moje dostepne umiejetnosci (skille):\n"
+        "{skills_detail}\n\n"
+        "Zadanie uzytkownika: \"{message}\"\n"
+        "Analiza: {analysis}\n\n"
+        "Ktore skille powinienem uruchomic, zeby najlepiej odpowiedziec na to zadanie?\n"
+        "Odpowiedz TYLKO w formacie (jeden skill na linie, max 3):\n"
+        "USE: <nazwa-skilla> | ARGS: <arg1> <arg2> | REASON: krotkie uzasadnienie\n"
+        "USE: none | REASON: uzasadnienie\n\n"
+        "Jesli zaden skill nie pasuje, napisz: USE: none | REASON: ...\n"
+        "Jesli skill nie wymaga argumentow, napisz: ARGS: (empty)"
+    ),
+    "en": (
+        "My available skills:\n"
+        "{skills_detail}\n\n"
+        "User task: \"{message}\"\n"
+        "Analysis: {analysis}\n\n"
+        "Which skills should I run to best answer this task?\n"
+        "Respond ONLY in this format (one skill per line, max 3):\n"
+        "USE: <skill-name> | ARGS: <arg1> <arg2> | REASON: brief justification\n"
+        "USE: none | REASON: justification\n\n"
+        "If no skill fits, write: USE: none | REASON: ...\n"
+        "If skill needs no arguments, write: ARGS: (empty)"
+    ),
+}
+
+COT_FALLBACK_SKILL_SELECT = {
+    "pl": "USE: none | REASON: brak pasujacych skilli",
+    "en": "USE: none | REASON: no matching skills",
+}
+
 
 # ============================================================
 #  THREAD 2 prompts -- used in reflection.py
@@ -560,6 +592,7 @@ UI = {
         "cot_skill": "Skill",
         "cot_plan": "Plan",
         "cot_interpret": "Interpretacja",
+        "cot_skill_select": "Dobor skilli",
     },
     "en": {
         "unknown_cmd": "Unknown command: {cmd}\nType /help to see the list.",
@@ -636,6 +669,7 @@ UI = {
         "cot_skill": "Skill",
         "cot_plan": "Plan",
         "cot_interpret": "Interpretation",
+        "cot_skill_select": "Skill selection",
     },
 }
 

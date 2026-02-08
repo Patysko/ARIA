@@ -32,6 +32,7 @@ from core.prompts import (
     get_lang, SYSTEM_PROMPT_TEMPLATE,
     COT_SYSTEM, CHAT_SYSTEM, COT_ANALYZE, COT_PLAN, COT_INTERPRET, COT_FINAL,
     COT_FALLBACK_ANALYZE, COT_FALLBACK_PLAN,
+    COT_SKILL_SELECT, COT_FALLBACK_SKILL_SELECT,
     CMD_DESC, UI,
 )
 
@@ -512,42 +513,71 @@ class AriaWebAgent:
         # -- Step 2: Recall relevant memory (exclude Thread 2 data) --
         from core.prompts import MEM
         no_mem = MEM.get(get_lang(), MEM["en"])["no_relevant"]
+        budget = self.llm.get_context_budget()
         memory_ctx = self.memory.get_relevant_context(
             message,
-            max_tokens=min(800, self.llm.get_available_context() // 4),
+            max_tokens=budget["memory_budget"],
             exclude_sources=["thread2"],
         )
         if memory_ctx and memory_ctx != no_mem:
             thinking_steps.append((L["cot_memory"], memory_ctx))
 
-        # -- Step 3: Find and run relevant skills --
-        all_relevant = self.skills.find_relevant(message)
-        if all_relevant:
-            for skill in all_relevant[:3]:
-                scripts = [s for s in skill.get_scripts() if s.suffix == ".py"]
-                if scripts:
-                    args = self._infer_skill_args(skill, message)
-                    result = skill.run_script(scripts[0].name, args=args)
-                    if result.get("returncode", 1) == 0 and result.get("stdout"):
-                        output = result["stdout"][:1500]
-                        skill_results[skill.name] = output
-                        skills_used.append(skill.name)
-                        thinking_steps.append((
-                            f"{L['cot_skill']}: {skill.name}",
-                            f"args={args}\nOutput: {output[:500]}"
-                        ))
-                    elif result.get("stderr") or result.get("error"):
-                        err = result.get("stderr", result.get("error", ""))[:200]
-                        thinking_steps.append((
-                            f"{L['cot_skill']} ERROR: {skill.name}",
-                            f"Error (args={args}): {err}"
-                        ))
+        # -- Step 3: LLM-driven skill selection (LLM call #2) --
+        #    Agent sees ALL skills with descriptions and decides which to run
+        selected_skills = []
+        if self.skills.list_names():
+            selection_result = self._cot_step_select_skills(message, analysis)
+            thinking_steps.append((L["cot_skill_select"], selection_result["raw"]))
+            selected_skills = selection_result["selected"]
 
-        # -- Step 4: Plan response (LLM call #2) --
+        # -- Step 4: Execute selected skills --
+        if selected_skills:
+            for sel in selected_skills[:3]:
+                skill = self.skills.get(sel["name"])
+                if not skill:
+                    continue
+                scripts = [s for s in skill.get_scripts() if s.suffix == ".py"]
+                if not scripts:
+                    continue
+                args = sel.get("args", [])
+                result = skill.run_script(scripts[0].name, args=args)
+                if result.get("returncode", 1) == 0 and result.get("stdout"):
+                    output = result["stdout"][:1500]
+                    skill_results[skill.name] = output
+                    skills_used.append(skill.name)
+                    thinking_steps.append((
+                        f"{L['cot_skill']}: {skill.name}",
+                        f"args={args}\nOutput: {output[:500]}"
+                    ))
+                elif result.get("stderr") or result.get("error"):
+                    err = result.get("stderr", result.get("error", ""))[:200]
+                    thinking_steps.append((
+                        f"{L['cot_skill']} ERROR: {skill.name}",
+                        f"Error (args={args}): {err}"
+                    ))
+        else:
+            # Fallback: keyword-based matching (in case LLM said none but there's a match)
+            all_relevant = self.skills.find_relevant(message)
+            if all_relevant:
+                for skill in all_relevant[:2]:
+                    scripts = [s for s in skill.get_scripts() if s.suffix == ".py"]
+                    if scripts:
+                        args = self._infer_skill_args(skill, message)
+                        result = skill.run_script(scripts[0].name, args=args)
+                        if result.get("returncode", 1) == 0 and result.get("stdout"):
+                            output = result["stdout"][:1500]
+                            skill_results[skill.name] = output
+                            skills_used.append(skill.name)
+                            thinking_steps.append((
+                                f"{L['cot_skill']}: {skill.name}",
+                                f"args={args}\nOutput: {output[:500]}"
+                            ))
+
+        # -- Step 5: Plan response (LLM call #3) --
         plan = self._cot_step_plan(message, analysis, thinking_steps, skill_results)
         thinking_steps.append((L["cot_plan"], plan))
 
-        # -- Step 5: Optional additional reasoning --
+        # -- Step 6: Optional additional reasoning --
         needs_more = self._cot_step_needs_more(message, plan, skill_results)
         if needs_more:
             thinking_steps.append((L["cot_interpret"], needs_more))
@@ -620,6 +650,74 @@ class AriaWebAgent:
         except Exception:
             return COT_FALLBACK_ANALYZE[lang]
 
+    def _cot_step_select_skills(self, message: str, analysis: str) -> dict:
+        """Ask LLM which skills to use, given full skill descriptions.
+        Returns {raw: str, selected: [{name, args, reason}]}"""
+        lang = get_lang()
+
+        # Build detailed skill listing with descriptions and scripts
+        skill_lines = []
+        for skill in self.skills.skills.values():
+            scripts = [s.name for s in skill.get_scripts()]
+            scripts_str = ", ".join(scripts) or "(no scripts)"
+            desc = skill.description or "(no description)"
+            instructions_preview = (skill.instructions or "")[:200]
+            skill_lines.append(
+                f"  - {skill.name}: {desc}\n"
+                f"    Scripts: {scripts_str}\n"
+                f"    Details: {instructions_preview}"
+            )
+        skills_detail = "\n".join(skill_lines) if skill_lines else "(no skills installed)"
+
+        prompt = COT_SKILL_SELECT[lang].format(
+            skills_detail=skills_detail,
+            message=message,
+            analysis=analysis[:400],
+        )
+
+        try:
+            self.llm.set_system_prompt(COT_SYSTEM[lang])
+            raw = self.llm.chat(prompt, include_history=False)
+            raw = self._strip_internal_tags(raw)
+        except Exception:
+            raw = COT_FALLBACK_SKILL_SELECT[lang]
+
+        # Parse LLM response — extract USE: lines
+        selected = []
+        for line in raw.split("\n"):
+            line = line.strip()
+            if not line.upper().startswith("USE:"):
+                continue
+            # Parse: USE: skill-name | ARGS: a b c | REASON: why
+            parts = [p.strip() for p in line.split("|")]
+            name = parts[0].split(":", 1)[1].strip().lower()
+            if name in ("none", "zaden", "brak", ""):
+                continue
+            # Check skill actually exists
+            if not self.skills.get(name):
+                # Try fuzzy match
+                for sn in self.skills.list_names():
+                    if name in sn or sn in name:
+                        name = sn
+                        break
+                else:
+                    continue
+
+            args = []
+            reason = ""
+            for part in parts[1:]:
+                part_upper = part.upper()
+                if part_upper.startswith("ARGS:"):
+                    args_str = part.split(":", 1)[1].strip()
+                    if args_str.lower() not in ("(empty)", "empty", "", "brak", "none"):
+                        args = args_str.split()
+                elif part_upper.startswith("REASON:"):
+                    reason = part.split(":", 1)[1].strip()
+
+            selected.append({"name": name, "args": args, "reason": reason})
+
+        return {"raw": raw[:600], "selected": selected[:3]}
+
     def _cot_step_plan(self, message: str, analysis: str,
                        steps: list, skill_results: dict) -> str:
         lang = get_lang()
@@ -659,30 +757,37 @@ class AriaWebAgent:
     def _cot_step_final_answer(self, message: str, thinking_steps: list,
                                 skill_results: dict, memory_ctx: str) -> str:
         lang = get_lang()
+        budget = self.llm.get_context_budget()
+        available = budget["user_msg_budget"]
+
         parts = []
         if skill_results:
             lbl = "Executed skill results:" if lang == "en" else "Wyniki uruchomionych umiejetnosci:"
             parts.append(lbl)
+            # Use up to 40% of available budget for skill outputs
+            skill_budget = available * 4 // 10  # in chars (~tokens*4)
             for sname, sout in skill_results.items():
-                parts.append(f"[{sname}]:\n{sout[:800]}")
+                parts.append(f"[{sname}]:\n{sout[:skill_budget]}")
 
         no_mem = "(no relevant memories)" if lang == "en" else "(brak powiazanych wspomnien)"
         if memory_ctx and memory_ctx != no_mem:
             lbl = "Memory context:" if lang == "en" else "Kontekst z pamieci:"
-            parts.append(f"{lbl}\n{memory_ctx[:500]}")
+            # Use up to 30% of available budget for memory
+            mem_budget = available * 3 // 10 * 4
+            parts.append(f"{lbl}\n{memory_ctx[:mem_budget]}")
 
         for label, content in thinking_steps:
             if "Plan" in label:
                 lbl = "Response plan:" if lang == "en" else "Plan odpowiedzi:"
-                parts.append(f"{lbl} {content[:300]}")
+                parts.append(f"{lbl} {content[:600]}")
                 break
 
         parts.append(COT_FINAL[lang].format(message=message))
         enriched = "\n".join(parts)
 
-        available = self.llm.get_available_context()
-        if self.llm.estimate_tokens(enriched) > available:
-            enriched = self._trim_to_budget(enriched, available)
+        real_available = self.llm.get_available_context()
+        if self.llm.estimate_tokens(enriched) > real_available:
+            enriched = self._trim_to_budget(enriched, real_available)
 
         try:
             self.llm.set_system_prompt(CHAT_SYSTEM[lang])
@@ -736,6 +841,7 @@ class AriaWebAgent:
             "llm_connected": self.llm_connected,
             "llm_model": self.llm.model,
             "llm_url": self.llm.base_url,
+            "context_length": self.llm.context_length,
             "thread2_running": self.reflection.is_running,
             "thread2_cycles": self.reflection._cycle_count,
             "memory": stats,
@@ -766,9 +872,10 @@ class AriaWebAgent:
         template = SYSTEM_PROMPT_TEMPLATE.get(lang, SYSTEM_PROMPT_TEMPLATE["en"])
         model = self.reflection.self_model
 
-        available = self.llm.context_length - self.llm.max_tokens
-        memory_budget = min(800, available // 4)
-        skills_budget = min(500, available // 6)
+        # Use context budget from LLM — fills available space aggressively
+        budget = self.llm.get_context_budget()
+        memory_budget = budget["memory_budget"]
+        skills_budget = budget["skills_budget"]
 
         skills_section = self.skills.get_skills_prompt_section()
         if self.llm.estimate_tokens(skills_section) > skills_budget:
