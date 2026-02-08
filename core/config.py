@@ -27,8 +27,8 @@ class Config:
         "base_url": "http://host.docker.internal:11434",
         "model": "codegemma:latest",
         "temperature": 0.7,
-        "max_tokens": 2048,
-        "context_length": 8192,
+        "max_tokens": 4096,
+        "context_length": "auto",   # "auto" = detect from Ollama API, or int
         "api_type": "ollama",
         "timeout": 120,
     }
@@ -37,8 +37,8 @@ class Config:
         "base_url": "http://host.docker.internal:11434",
         "model": "codegemma:latest",
         "temperature": 0.9,
-        "max_tokens": 1024,
-        "context_length": 8192,
+        "max_tokens": 2048,
+        "context_length": "auto",
         "api_type": "ollama",
         "timeout": 60,
     }
