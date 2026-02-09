@@ -1,6 +1,7 @@
 ---
 name: web-search
 description: Wyszukiwanie w internecie przez SearXNG. Uzywaj gdy uzytkownik pyta o aktualne informacje, wiadomosci, dane z internetu, szukanie, google, wyszukaj, znajdz.
+protected: true
 ---
 
 # Web Search Skill
