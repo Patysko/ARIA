@@ -12,11 +12,11 @@ aria-agent/
 │   ├── agent.py             # Main orchestrator (Thread 1 + 2)
 │   ├── config.py            # Configuration loader
 │   ├── prompts.py           # All prompts & strings (PL/EN)
-│   ├── memory.py            # Compressed memory (ST → LT) + pending tasks
+│   ├── memory.py            # Compressed memory (ST → LT) + RL neural network + pending tasks
 │   ├── skills_manager.py    # Skill manager (SKILL.md format) + error logs
 │   ├── computer.py          # System tools (shell, files, Python)
-│   ├── llm.py               # Ollama/OpenAI LLM client
-│   ├── reflection.py        # Background reflection thread + task processing
+│   ├── llm.py               # Ollama/OpenAI LLM client (no timeouts, chunked responses)
+│   ├── reflection.py        # Background reflection thread + system exploration + task processing
 │   └── logger.py            # Central event logging
 ├── web/
 │   ├── server.py            # WebUI HTTP server + API
@@ -24,6 +24,7 @@ aria-agent/
 ├── skills/                  # Skills (OpenClaw/AgentSkills format)
 └── memory/                  # Persistent memory (auto-generated)
     ├── memory.json
+    ├── memory_network.json  # RL neural network weights
     ├── pending_tasks.json   # User tasks waiting for completion
     ├── reflections.jsonl
     ├── self_model.json
@@ -37,17 +38,50 @@ aria-agent/
 - Interactive REPL (CLI) or WebUI with real-time dashboard
 - Understands slash commands (`/exec`, `/python`, `/read`, `/write`, etc.)
 - JSON-structured Chain of Thought: Analyze → Memory → Skill Selection → Execute → Plan → Answer
-- Categorizes and weighs importance of every interaction
+- Categorizes and weighs importance of every interaction (RL neural network scoring)
 - Detects when it can't answer and adds task to pending queue
+- Long responses auto-chunked across multiple messages (no truncation)
 
 ### Thread 2: Reflection & Self-Improvement
 - Runs continuously in the background, independently from conversations
-- Cycles through phases: introspection, pattern analysis, skill planning, skill building, skill testing, self-improvement, knowledge synthesis, exploration, **pending tasks**
-- Autonomously creates, tests, and fixes skills
+- Cycles through phases: introspection, pattern analysis, skill planning, skill building, skill testing, self-improvement, knowledge synthesis, exploration, pending tasks, **system exploration**
+- Autonomously creates, **improves**, tests, and fixes skills (prefers improving over duplicating)
+- **System exploration**: safely discovers system environment via read-only shell commands (double safety check: hardcoded blocklist + LLM verification)
 - **Proactive messaging**: sends messages to user on any topic at any time (skill creation, task completion, observations, greetings)
 - **Pending task processing**: retries user tasks that failed, notifies user when completed
 - **Skill error log clearing**: clears error history after successful fix cycles
 - Updates the agent's self-model
+
+## LLM Communication (No Timeouts)
+
+ARIA's LLM client has **zero timeouts** for Ollama — it relies entirely on Ollama's structured `done` flag to know when a response is complete. This eliminates mid-word truncation issues on slow hardware.
+
+- **Streaming**: reads chunks until `{"done": true}` — no socket/connection timeout
+- **Non-streaming**: internally uses streaming to avoid blocking
+- **Truncation detection**: checks `done_reason == "length"` and auto-continues
+- **`chat_long()`**: automatically splits responses truncated by token limit into multiple parts (up to 3), sending "Continue" to the model between parts
+
+## Skill System: Improve Before Create
+
+Thread 2's skill building phase now **prefers improving existing skills** over creating new duplicates:
+
+1. LLM receives full code of all existing skills as context
+2. LLM must choose `action: "improve"` or `action: "create"` with justification
+3. **Duplicate detection**: Jaccard similarity check on name+description — rejects >50% overlap with existing skills
+4. **Improvement workflow**: backup old code → write new → test → rollback on failure
+5. **Creation workflow**: only when truly new functionality is needed
+
+## System Exploration
+
+Thread 2 periodically explores the host system to understand its environment:
+
+1. LLM plans 3-5 read-only shell commands based on what it already knows
+2. **Double safety check** before each command:
+   - Hardcoded blocklist: `rm`, `sudo`, `dd`, `mkfs`, `shutdown`, `kill`, `chmod -R`, `> /`, etc.
+   - LLM safety evaluation: assesses whether the command modifies files, installs packages, or could harm the system
+3. Safe commands execute with 15s timeout
+4. Results stored in memory as `system_discovery` category
+5. Knowledge accumulates across cycles — LLM sees previous discoveries to avoid redundant exploration
 
 ## Pending Tasks System
 
@@ -82,6 +116,51 @@ Step 6: Interpret → {"summary": "...", "useful": true/false}
 Step 7: Final answer → natural language response (no CoT artifacts)
 ```
 
+## RL Memory Network
+
+Memory importance is scored by a lightweight reinforcement learning neural network that runs entirely on CPU:
+
+```
+Architecture: 28 features → 16 hidden (ReLU) → 1 output (sigmoid)
+Training: REINFORCE-style policy gradient, single-step updates
+Persistence: weights saved to memory/memory_network.json
+```
+
+**Features extracted** (28 total):
+- Text metrics: length, word count, lexical diversity, question/exclamation density
+- Content signals: has code, has URL, digit ratio, multiline, structured content
+- Category one-hot encoding (8 categories)
+- Metadata: interaction number, skill mentions, error mentions, source type
+
+**RL Rewards**:
+- Entry recalled by user query: **+1.0**
+- User explicitly says "remember/zapamiętaj": **+2.0**
+- Entry with high access count during compression: **+0.5**
+- Entry never accessed with low importance: **-0.5**
+
+**Scoring blend**: `final_importance = 0.4 × heuristic + 0.6 × neural_network`
+
+The network improves over time — frequently useful memories get higher scores, low-value content gets filtered out.
+
+## Compressed Memory (LLM-Powered)
+
+```
+New interaction → RL importance scoring → Short-term memory
+                                               ↓ (buffer full)
+                                    LLM-generated summaries
+                                               ↓
+                                    Long-term compressed blocks
+                                               ↓
+                                    Episodic memory (key moments)
+```
+
+- **Short-term**: Full details, max 20 entries, scored by RL network
+- **Long-term**: LLM-generated summaries with max character limit (falls back to rule-based if LLM unavailable)
+- **Episodic**: Breakthrough moments (new skills, discoveries)
+- **Pending tasks**: User requests awaiting completion
+- **RL training**: happens during compression (reward for accessed entries, penalty for never-used)
+- Semantic search: `/recall <query>` (also triggers RL reward for recalled entries)
+
 ## Logging
 
 All events are logged to `memory/logs/aria.log` (rotating, 10MB max, 3 backups):
@@ -91,30 +170,12 @@ All events are logged to `memory/logs/aria.log` (rotating, 10MB max, 3 backups):
 2025-01-15 14:23:01 | DEBUG | COT/analyze | {"intent": "system info", ...}
 2025-01-15 14:23:02 | INFO  | SKILL system-monitor/main.py exit=0 | CPU: 45%, RAM: 3.2GB...
 2025-01-15 14:23:03 | INFO  | AGENT [5] skills=['system-monitor'] | Twój system wygląda...
-2025-01-15 14:23:30 | INFO  | T2/skill_building | Cycle 12
-2025-01-15 14:23:45 | INFO  | T2->USER | Stworzyłem nową umiejętność: disk-usage...
+2025-01-15 14:23:30 | INFO  | T2/system_exploration | Running: df -h (disk space)
+2025-01-15 14:23:45 | INFO  | T2->USER | Ulepszyłem umiejętność: system-monitor...
 2025-01-15 14:24:00 | INFO  | TASK/completed task-1705312981-0 | Free space: 45GB...
 ```
 
 Log categories: `USER`, `AGENT`, `COT/*`, `T2/*`, `T2->USER`, `SKILL`, `SKILL_ERR`, `TASK/*`, `CMD`, `ERROR`, `WARN`
-
-## Compressed Memory
-
-```
-New interaction → Short-term memory (full detail)
-                        ↓ (when buffer is full)
-                  Thematic compression
-                        ↓
-                  Long-term memory (compressed blocks)
-                        ↓
-                  Episodic memory (key moments)
-```
-
-- **Short-term**: Full details, max 20 entries (configurable)
-- **Long-term**: Compressed thematic blocks with keywords
-- **Episodic**: Breakthrough moments (new skills, discoveries)
-- **Pending tasks**: User requests awaiting completion
-- Semantic search: `/recall <query>`
 
 ## Skill System (OpenClaw Format)
 
@@ -130,9 +191,9 @@ description: When and why to use this skill
 ...
 ```
 
-### Creating Skills
+### Creating & Improving Skills
 1. **Manually**: `/create-skill {json}` with name, description, instructions, script_code
-2. **Automatically**: Thread 2 creates skills when it detects patterns
+2. **Automatically**: Thread 2 creates or improves skills based on user interaction patterns
 3. **Programmatically**: `skills_manager.create_skill(name, desc, instructions, scripts)`
 
 ## Language Support
@@ -144,7 +205,7 @@ Set language via:
 - **config.json**: `"agent": { "language": "en" }`
 - **Docker Compose**: `ARIA_LANG=en` in environment section
 
-## Quick Start (Docker)
+## Quick Start (Docker) RECOMMENDED
 
 ```bash
 # Prerequisites: Ollama running on host with a model pulled
@@ -204,14 +265,19 @@ python main.py --web --port 3000
         "base_url": "http://localhost:11434",
         "model": "llama3.2",
         "temperature": 0.7,
-        "max_tokens": 2048,
-        "api_type": "ollama"
+        "max_tokens": 4096,
+        "context_length": "auto",
+        "api_type": "ollama",
+        "timeout": 300
     },
     "reflection_llm": {
         "base_url": "http://localhost:11434",
         "model": "llama3.2",
         "temperature": 0.9,
-        "max_tokens": 1024
+        "max_tokens": 4096,
+        "context_length": "auto",
+        "api_type": "ollama",
+        "timeout": 180
     },
     "agent": {
         "language": "en",
@@ -221,6 +287,8 @@ python main.py --web --port 3000
     }
 }
 ```
+
+Note: `timeout` values in config are retained for non-Ollama endpoints (OpenAI-compatible). Ollama communication uses no timeouts — it relies on the structured `done` flag.
 
 ## Commands
 
@@ -254,7 +322,7 @@ python main.py --web --port 3000
 
 - Real-time chat with JSON-structured Chain of Thought (expandable)
 - Thread 2 live thought stream panel
-- Proactive messages from Thread 2 (skill creation, task completion, observations)
+- Proactive messages from Thread 2 (skill creation/improvement, task completion, system discoveries)
 - Status dashboard with memory/skills/interaction/task stats
 - Command palette with autocomplete (type `/`)
 - Skill browser with run buttons and error counts
@@ -268,5 +336,4 @@ Architecture inspired by [OpenClaw](https://openclaw.ai/):
 - SKILL.md-based skill system (AgentSkills format)
 - Local command and script execution
 - Persistent memory across sessions
-
 - Modular, extensible architecture
