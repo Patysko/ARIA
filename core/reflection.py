@@ -158,9 +158,13 @@ class ReflectionThread:
         thoughts = []
         ctx = self._build_context()
 
-        # Build skills detail with actual code snippets
+        # Build skills detail with actual code snippets — SKIP protected skills
         skills_detail = ""
+        protected_list = []
         for sname, skill in list(self.skills.skills.items()):
+            if skill.protected:
+                protected_list.append(sname)
+                continue  # Don't show code of protected skills — LLM should not touch them
             scripts = skill.get_scripts()
             for sp in scripts:
                 if sp.suffix == ".py":
@@ -169,6 +173,10 @@ class ReflectionThread:
                         skills_detail += f"\n### {sname}/{sp.name}:\n```python\n{code}\n```\n"
                     except Exception:
                         pass
+
+        # Add protected skills note to context
+        if protected_list:
+            skills_detail += f"\n\n**PROTECTED skills (DO NOT modify):** {', '.join(protected_list)}\n"
 
         self._emit(m["designing"])
         try:
@@ -185,7 +193,7 @@ class ReflectionThread:
         except Exception as e:
             return [m["llm_error"].format(e=e)]
 
-        sd = self._extract_json(response) or self._extract_skill_from_text(response)
+        sd = self._extract_json(response, require_name=True) or self._extract_skill_from_text(response)
         if not sd or not sd.get("name"):
             self._emit(m["bad_json"])
             return [m["bad_json"]]
@@ -195,6 +203,12 @@ class ReflectionThread:
         code = self._clean_code(sd.get("script_code", ""))
         if not code.strip():
             return [m["no_code"].format(name=name)]
+
+        # PROTECTED skill guard — never modify protected skills
+        if self.skills.is_protected(name):
+            msg = m["protected"].format(name=name)
+            self._emit(msg)
+            return [msg]
 
         # Similarity check: reject if too similar to existing skill
         if action == "create" and self._is_duplicate_skill(name, sd.get("description", "")):
@@ -263,6 +277,12 @@ class ReflectionThread:
         skill = self.skills.get(name)
         if not skill:
             return [m["exists"].format(name=name)]
+
+        # PROTECTED skill guard
+        if skill.protected:
+            msg = m["protected"].format(name=name)
+            self._emit(msg)
+            return [msg]
 
         self._emit(m["improving"].format(name=name))
         sn = sd.get("script_name", "main.py")
@@ -335,6 +355,10 @@ class ReflectionThread:
                     tested += 1
                     r = self._test_skill(skill, sp.name)
                     if not r["success"]:
+                        # Don't try to fix protected skills
+                        if skill.protected:
+                            thoughts.append(f"[T2] {sn} failed but is protected, skipping fix")
+                            continue
                         args = self._infer_test_args(skill)
                         if args:
                             r2 = self._test_skill(skill, sp.name, test_args=args)
@@ -355,8 +379,7 @@ class ReflectionThread:
                                 log.thread2("skill_testing", f"Cleared error log: {sn}")
                         else:
                             self._emit(m["fix_skip"].format(key=fk))
-                    else:
-                        self._emit(m["test_ok"].format(path=f"{sn}/{sp.name}", args=""))
+                    # Note: _test_skill already emits test_ok, no need to emit again
 
         msg = m["test_summary"].format(tested=tested, fixed=fixed)
         thoughts.append(msg)
@@ -436,6 +459,9 @@ class ReflectionThread:
         lang = get_lang()
         if not self._llm:
             return m["fix_no_llm"]
+        # Never fix protected skills
+        if skill.protected:
+            return m["protected"].format(name=skill.name)
         pip_list = self.computer.execute("pip3 list --format=columns 2>/dev/null | head -30")
         installed = pip_list.get("stdout", "")[:500] if pip_list.get("success") else "unknown"
         try:
@@ -643,12 +669,20 @@ class ReflectionThread:
                 ),
                 include_history=False,
             )
-            plan = self._extract_json(raw)
+            # Note: _extract_json with require_name=False accepts any dict
+            plan = self._extract_json(raw, require_name=False)
         except Exception as e:
-            return [m["llm_error"].format(e=e)]
+            msg = m["llm_error"].format(e=e)
+            self._emit(msg)
+            return [msg]
 
         if not plan or not plan.get("commands"):
-            return ["[T2] No exploration commands planned"]
+            msg = "[T2] No exploration commands planned (LLM returned no valid JSON)"
+            self._emit(msg)
+            thoughts.append(msg)
+            # Log raw response for debugging
+            thoughts.append(f"[T2] Raw LLM response: {raw[:200]}")
+            return thoughts
 
         findings = []
         for item in plan["commands"][:5]:
@@ -669,13 +703,14 @@ class ReflectionThread:
                     T2_SAFETY_CHECK[lang].format(command=cmd, purpose=purpose),
                     include_history=False,
                 )
-                safety = self._extract_json(safety_raw)
+                safety = self._extract_json(safety_raw, require_name=False)
                 if not safety or not safety.get("safe"):
                     reason = safety.get("reason", "unknown") if safety else "no response"
                     self._emit(m["explore_unsafe"].format(cmd=cmd))
                     thoughts.append(f"LLM rejected: {cmd} ({reason})")
                     continue
             except Exception:
+                thoughts.append(f"Safety check failed for: {cmd}")
                 continue
 
             # Execute
@@ -700,6 +735,8 @@ class ReflectionThread:
             )
             self._emit(m["explore_summary"].format(findings=summary[:150]))
             log.thread2("system_exploration", f"Found: {summary[:200]}")
+        elif not thoughts:
+            thoughts.append("[T2] No findings this cycle")
 
         return thoughts
 
@@ -832,7 +869,7 @@ class ReflectionThread:
 
     # --- JSON parsing ---
 
-    def _extract_json(self, text):
+    def _extract_json(self, text, require_name=False):
         text = re.sub(r'```json\s*', '', text)
         text = re.sub(r'```\s*', '', text)
         i = text.find("{")
@@ -852,9 +889,19 @@ class ReflectionThread:
         if depth != 0: return None
         try:
             d = json.loads(text[i:end])
-            return d if isinstance(d, dict) and d.get("name") else None
+            if not isinstance(d, dict):
+                return None
+            if require_name and not d.get("name"):
+                return None
+            return d
         except json.JSONDecodeError:
-            try: return json.loads(text[i:end].replace("'", '"'))
+            try:
+                d = json.loads(text[i:end].replace("'", '"'))
+                if not isinstance(d, dict):
+                    return None
+                if require_name and not d.get("name"):
+                    return None
+                return d
             except: return None
 
     def _extract_skill_from_text(self, text):
@@ -889,7 +936,7 @@ class ReflectionThread:
         if phase == "skill_building": return self._phase_build()
         if phase == "skill_testing": return self._phase_test()
         if phase == "task_processing": return self._phase_tasks()
-        if phase == "proactive_messaging": return self._phase_proactive()
+        if phase == "system_exploration": return self._phase_explore_system()
         return self._phase_think(phase)
 
     def get_last_reflections(self, n=3):

@@ -245,13 +245,15 @@ T2_BUILD = {
 {previous_thoughts}
 
 ## WAZNE ZASADY:
-1. NAJPIERW sprawdz czy istniejacy skill mozna ULEPSZYC zamiast tworzyc nowy
-2. NIGDY nie twórz skilla ktory robi to samo co istniejacy (nawet pod inna nazwa)
-3. Jesli ulepszasz: action="improve", podaj name istniejacego skilla i nowy kod
-4. Jesli tworzysz nowy: action="create", upewnij sie ze to NOWA funkcjonalnosc
-5. Skill PRAKTYCZNY i LEKKI (bez GPU, bez transformers/pytorch)
-6. Skrypt MUSI dzialac BEZ argumentow (sensowne domyslne)
-7. Tylko lekkie pip (requests, psutil, beautifulsoup4 itp.)
+1. Skille oznaczone [PROTECTED] sa chronione — NIE MOZESZ ich modyfikowac ani ulepszac
+2. NAJPIERW sprawdz czy NIECHRONIIONY istniejacy skill mozna ULEPSZYC zamiast tworzyc nowy
+3. NIGDY nie twórz skilla ktory robi to samo co istniejacy (nawet pod inna nazwa)
+4. Jesli ulepszasz: action="improve", podaj name istniejacego NIECHRONIONEGO skilla i nowy kod
+5. Jesli tworzysz nowy: action="create", upewnij sie ze to NOWA funkcjonalnosc
+6. PREFERUJ tworzenie NOWYCH skilli — agent potrzebuje roznorodnosci (system-monitor, disk-usage, process-list, weather, calculator itp.)
+7. Skill PRAKTYCZNY i LEKKI (bez GPU, bez transformers/pytorch)
+8. Skrypt MUSI dzialac BEZ argumentow (sensowne domyslne)
+9. Tylko lekkie pip (requests, psutil, beautifulsoup4 itp.)
 
 Odpowiedz TYLKO JSON:
 ```json
@@ -282,13 +284,15 @@ Odpowiedz TYLKO JSON:
 {previous_thoughts}
 
 ## IMPORTANT RULES:
-1. FIRST check if an existing skill can be IMPROVED instead of creating new
-2. NEVER create a skill that does the same as an existing one (even under a different name)
-3. If improving: action="improve", use name of existing skill and new code
-4. If creating new: action="create", ensure it's truly NEW functionality
-5. Skill must be PRACTICAL and LIGHTWEIGHT (no GPU, no transformers/pytorch)
-6. Script MUST work WITHOUT arguments (sensible defaults)
-7. Only lightweight pip packages (requests, psutil, beautifulsoup4 etc.)
+1. Skills marked [PROTECTED] are locked — you CANNOT modify or improve them
+2. FIRST check if a NON-PROTECTED existing skill can be IMPROVED instead of creating new
+3. NEVER create a skill that does the same as an existing one (even under a different name)
+4. If improving: action="improve", use name of existing NON-PROTECTED skill and new code
+5. If creating new: action="create", ensure it's truly NEW functionality
+6. PREFER creating NEW skills — the agent needs diversity (system-monitor, disk-usage, process-list, weather, calculator etc.)
+7. Skill must be PRACTICAL and LIGHTWEIGHT (no GPU, no transformers/pytorch)
+8. Script MUST work WITHOUT arguments (sensible defaults)
+9. Only lightweight pip packages (requests, psutil, beautifulsoup4 etc.)
 
 Respond ONLY with JSON:
 ```json
@@ -457,6 +461,7 @@ T2_MSG = {
         "explore_unsafe": "[T2] Komenda niebezpieczna, pomijam: {cmd}",
         "explore_result": "[T2] Wynik: {result}",
         "explore_summary": "[T2] Odkrycia: {findings}",
+        "protected": "[T2] Skill '{name}' jest chroniony — pomijam modyfikacje",
     },
     "en": {
         "cycle": "--- Cycle {n} | {phase} ---",
@@ -502,6 +507,7 @@ T2_MSG = {
         "explore_unsafe": "[T2] Unsafe command, skipping: {cmd}",
         "explore_result": "[T2] Result: {result}",
         "explore_summary": "[T2] Discoveries: {findings}",
+        "protected": "[T2] Skill '{name}' is protected — skipping modification",
     },
 }
 

@@ -54,6 +54,7 @@ class Skill:
         self.use_count = 0
         self.last_used = None
         self.created_at = None
+        self.protected = False  # Protected skills cannot be modified by Thread 2
         self.error_log: list[dict] = []  # Recent errors, cleared after fix
 
         if self.skill_md.exists():
@@ -61,6 +62,9 @@ class Skill:
             self.metadata, self.instructions = parse_frontmatter(content)
             self.name = self.metadata.get("name", self.name)
             self.description = self.metadata.get("description", "")
+            # Protected flag from frontmatter: "protected: true"
+            pv = self.metadata.get("protected", "false").lower().strip()
+            self.protected = pv in ("true", "yes", "1")
 
         # Load stats if exist
         stats_file = path / ".stats.json"
@@ -171,6 +175,7 @@ class Skill:
             "use_count": self.use_count,
             "last_used": self.last_used,
             "created_at": self.created_at,
+            "protected": self.protected,
             "error_count": len(self.error_log),
             "recent_errors": self.error_log[-3:],
         }
@@ -205,6 +210,19 @@ class SkillsManager:
 
     def list_names(self) -> list[str]:
         return list(self.skills.keys())
+
+    def list_modifiable_names(self) -> list[str]:
+        """List skill names that Thread 2 can modify."""
+        return [n for n, s in self.skills.items() if not s.protected]
+
+    def list_protected_names(self) -> list[str]:
+        """List skill names that are protected from Thread 2 modifications."""
+        return [n for n, s in self.skills.items() if s.protected]
+
+    def is_protected(self, name: str) -> bool:
+        """Check if a skill is protected."""
+        skill = self.skills.get(name)
+        return skill.protected if skill else False
 
     def find_relevant(self, query: str) -> list[Skill]:
         """Find skills relevant to a query based on description matching."""
@@ -299,5 +317,6 @@ description: {description}
         lines = ["DostÄ™pne umiejÄ™tnoÅ›ci:"]
         for skill in self.skills.values():
             scripts = ", ".join(s.name for s in skill.get_scripts()) or "brak"
-            lines.append(f"  â€¢ {skill.name}: {skill.description[:100]} [skrypty: {scripts}]")
+            prot = " [PROTECTED]" if skill.protected else ""
+            lines.append(f"  â€¢ {skill.name}: {skill.description[:100]} [skrypty: {scripts}]{prot}")
         return "\n".join(lines)
