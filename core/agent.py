@@ -70,6 +70,7 @@ class AriaAgent:
         print(colored(f"  {mem_lbl}: {stats['short_term_count']}ST + {stats['long_term_count']}LT | {sk_lbl}: {len(self.skills.list_names())} | Model: {self.llm.model} | Lang: {lang}", C.DIM))
 
         if self.llm_connected:
+            self.memory.set_llm(self.reflection_llm)
             self.reflection.on_thought = self._on_background_thought
             self.reflection.start_background(llm_client=self.reflection_llm, interval=30)
             t2 = colored("ACTIVE" if lang == "en" else "AKTYWNY", C.GREEN)

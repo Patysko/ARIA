@@ -221,38 +221,54 @@ class LLMClient:
     # —— Ollama Native API (/api/chat) ——
 
     def _chat_ollama(self, messages: list[dict]) -> str:
+        """Non-streaming Ollama chat. No timeout — waits for done flag."""
         payload = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            "stream": True,  # Always stream internally to avoid timeout issues
             "options": {
                 "temperature": self.temperature,
                 "num_predict": self.max_tokens,
                 "num_ctx": self.context_length,
             },
         }
-        # Non-streaming needs longer timeout — model generates all tokens before responding
-        # Rough: ~20 tokens/sec on CPU → 4096 tokens ≈ 200s
-        gen_timeout = max(self.timeout, (self.max_tokens // 15) + 30)
+        full_response = ""
+        truncated = False
         try:
-            data = self._post(f"{self.base_url}/api/chat", payload,
-                              timeout=gen_timeout)
-            content = data.get("message", {}).get("content", "")
-
-            # Check if response was truncated by token limit
-            done_reason = data.get("done_reason", "")
-            if done_reason == "length":
-                content += "\n\n⚠️ [Response truncated — token limit reached]"
+            req = urllib.request.Request(
+                f"{self.base_url}/api/chat",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urllib.request.urlopen(req)
+            try:
+                for line in resp:
+                    if line:
+                        try:
+                            chunk = json.loads(line.decode("utf-8"))
+                            token = chunk.get("message", {}).get("content", "")
+                            if token:
+                                full_response += token
+                            if chunk.get("done"):
+                                if chunk.get("done_reason") == "length":
+                                    truncated = True
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            finally:
+                resp.close()
 
             self.add_to_history("user", messages[-1]["content"])
-            self.add_to_history("assistant", content)
-            return content
+            self.add_to_history("assistant", full_response)
+            return full_response
         except urllib.error.HTTPError as e:
             return self._handle_http_error(e, "chat")
         except Exception as e:
             return f"[LLM Error] {e}"
 
     def _stream_ollama(self, messages: list[dict]) -> Generator[str, None, None]:
+        """Streaming Ollama chat. No timeout — relies on done flag from Ollama."""
         payload = {
             "model": self.model,
             "messages": messages,
@@ -272,13 +288,7 @@ class LLMClient:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            # Use a short connection timeout, but set socket timeout high
-            # so streaming doesn't get killed mid-generation
-            import socket
-            resp = urllib.request.urlopen(req, timeout=30)  # 30s to connect
-            # Set socket read timeout per-chunk: 120s between chunks
-            # (model thinking can take time before first token)
-            resp.fp.raw._sock.settimeout(max(120, self.timeout))
+            resp = urllib.request.urlopen(req)
             try:
                 for line in resp:
                     if line:
@@ -288,7 +298,6 @@ class LLMClient:
                             if token:
                                 full_response += token
                                 yield token
-                            # Check for end of generation
                             if chunk.get("done"):
                                 if chunk.get("done_reason") == "length":
                                     truncated = True
@@ -299,22 +308,73 @@ class LLMClient:
                 resp.close()
 
             if truncated:
-                yield "\n\n⚠️ [Response truncated — token limit reached]"
+                yield "\n\n[...continued below]"
 
             self.add_to_history("user", messages[-1]["content"])
             self.add_to_history("assistant", full_response)
         except urllib.error.HTTPError as e:
             yield self._handle_http_error(e, "stream")
-        except socket.timeout:
-            # Socket timeout between chunks — model stalled
-            if full_response:
-                yield "\n\n⚠️ [Response interrupted — generation timeout]"
-                self.add_to_history("user", messages[-1]["content"])
-                self.add_to_history("assistant", full_response)
-            else:
-                yield "\n[LLM Error] Timeout waiting for response"
         except Exception as e:
             yield f"\n[LLM Error] {e}"
+
+    def chat_long(self, user_message: str, max_parts: int = 3) -> list[str]:
+        """Chat that auto-continues if response was truncated by token limit.
+        Returns list of response parts (usually 1, up to max_parts)."""
+        parts = []
+        messages = self._build_messages(user_message, include_history=True)
+
+        for i in range(max_parts):
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens,
+                    "num_ctx": self.context_length,
+                },
+            }
+            chunk_text = ""
+            truncated = False
+            try:
+                req = urllib.request.Request(
+                    f"{self.base_url}/api/chat",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                resp = urllib.request.urlopen(req)
+                try:
+                    for line in resp:
+                        if line:
+                            try:
+                                c = json.loads(line.decode("utf-8"))
+                                t = c.get("message", {}).get("content", "")
+                                if t:
+                                    chunk_text += t
+                                if c.get("done"):
+                                    if c.get("done_reason") == "length":
+                                        truncated = True
+                                    break
+                            except json.JSONDecodeError:
+                                continue
+                finally:
+                    resp.close()
+            except Exception:
+                break
+
+            parts.append(chunk_text)
+            if not truncated:
+                break
+
+            # Continue: add assistant response and ask to continue
+            messages.append({"role": "assistant", "content": chunk_text})
+            messages.append({"role": "user", "content": "Continue from where you left off."})
+
+        full = "".join(parts)
+        self.add_to_history("user", user_message)
+        self.add_to_history("assistant", full)
+        return parts
 
     # —— OpenAI-compatible API (/v1/chat/completions) ——
 

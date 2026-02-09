@@ -21,12 +21,13 @@ from core.logger import log
 from core.prompts import (
     get_lang, T2_SYSTEM, T2_BUILD, T2_FIX, T2_THINK,
     T2_PHASE_INSTRUCTIONS, T2_MSG, T2_TASK_CHECK, T2_PROACTIVE,
+    T2_EXPLORE_PLAN, T2_SAFETY_CHECK,
 )
 
 PHASES = [
     "introspection", "pattern_analysis", "skill_planning", "skill_building",
     "skill_testing", "self_improvement", "knowledge_synthesis", "exploration",
-    "task_processing", "proactive_messaging",
+    "task_processing", "system_exploration",
 ]
 
 MAX_FIX_ATTEMPTS = 2
@@ -131,10 +132,14 @@ class ReflectionThread:
             thoughts = self._phase_test()
         elif phase == "task_processing":
             thoughts = self._phase_tasks()
-        elif phase == "proactive_messaging":
-            thoughts = self._phase_proactive()
+        elif phase == "system_exploration":
+            thoughts = self._phase_explore_system()
         else:
             thoughts = self._phase_think(phase)
+
+        # Proactive messaging every 5 cycles
+        if self._cycle_count % 5 == 0:
+            self._try_proactive()
 
         self._update_self_model()
         self._save_reflection({
@@ -153,12 +158,25 @@ class ReflectionThread:
         thoughts = []
         ctx = self._build_context()
 
+        # Build skills detail with actual code snippets
+        skills_detail = ""
+        for sname, skill in list(self.skills.skills.items()):
+            scripts = skill.get_scripts()
+            for sp in scripts:
+                if sp.suffix == ".py":
+                    try:
+                        code = sp.read_text(errors="replace")[:500]
+                        skills_detail += f"\n### {sname}/{sp.name}:\n```python\n{code}\n```\n"
+                    except Exception:
+                        pass
+
         self._emit(m["designing"])
         try:
             self._llm.set_system_prompt(T2_SYSTEM[lang])
             response = self._llm.chat(
                 T2_BUILD[lang].format(
                     skills_list=ctx["skills_list"],
+                    skills_detail=skills_detail or "(no code)",
                     recent_interactions=ctx["recent"],
                     previous_thoughts=ctx["prev_thoughts"],
                 ),
@@ -172,14 +190,25 @@ class ReflectionThread:
             self._emit(m["bad_json"])
             return [m["bad_json"]]
 
+        action = sd.get("action", "create")
         name = sd["name"]
-        if name in self.skills.list_names():
-            self._emit(m["exists"].format(name=name))
-            return [m["exists"].format(name=name)]
-
         code = self._clean_code(sd.get("script_code", ""))
         if not code.strip():
             return [m["no_code"].format(name=name)]
+
+        # Similarity check: reject if too similar to existing skill
+        if action == "create" and self._is_duplicate_skill(name, sd.get("description", "")):
+            self._emit(m["exists"].format(name=name))
+            return [m["exists"].format(name=name)]
+
+        # Handle IMPROVE action
+        if action == "improve" and name in self.skills.list_names():
+            return self._improve_skill(name, sd, code, thoughts)
+
+        # Handle CREATE action
+        if name in self.skills.list_names():
+            self._emit(m["exists"].format(name=name))
+            return [m["exists"].format(name=name)]
 
         pip_pkgs = self._filter_packages(sd.get("pip_packages", []))
         detected = self._filter_packages(self.computer.extract_imports(code))
@@ -202,7 +231,6 @@ class ReflectionThread:
 
         thoughts.append(m["created"].format(name=name))
         sn = sd.get("script_name", "main.py")
-
         test = self._test_skill(skill, sn)
         thoughts.append(test["message"])
         if not test["success"]:
@@ -228,6 +256,70 @@ class ReflectionThread:
         self.self_model["improvements_applied"] = self.self_model.get("improvements_applied", 0) + 1
         self.config.save_self_model(self.self_model)
         return thoughts
+
+    def _improve_skill(self, name: str, sd: dict, code: str, thoughts: list) -> list[str]:
+        """Improve an existing skill with new code."""
+        m = self._m
+        skill = self.skills.get(name)
+        if not skill:
+            return [m["exists"].format(name=name)]
+
+        self._emit(m["improving"].format(name=name))
+        sn = sd.get("script_name", "main.py")
+        script_path = skill.scripts_dir / sn
+
+        # Install deps
+        pip_pkgs = self._filter_packages(sd.get("pip_packages", []))
+        detected = self._filter_packages(self.computer.extract_imports(code))
+        all_deps = list(set(pip_pkgs + detected))
+        if all_deps:
+            self.computer.pip_install(all_deps)
+
+        # Backup old code, write new
+        old_code = ""
+        if script_path.exists():
+            old_code = script_path.read_text(errors="replace")
+        script_path.write_text(code)
+        script_path.chmod(0o755)
+
+        # Update SKILL.md if description changed
+        if sd.get("description"):
+            skill.description = sd["description"]
+        if sd.get("instructions"):
+            skill.instructions = sd["instructions"]
+
+        # Test
+        test = self._test_skill(skill, sn)
+        thoughts.append(test["message"])
+
+        if not test["success"] and old_code:
+            # Rollback on failure
+            script_path.write_text(old_code)
+            thoughts.append(f"Rolled back {name} — new code failed")
+            return thoughts
+
+        reason = sd.get("reason", "improved")
+        self._emit_to_user(m["improved"].format(name=name, reason=reason))
+        self.memory.add(f"Thread 2 improved skill: {name} — {reason}",
+                       category="skill-creation", importance=0.8,
+                       metadata={"source": "thread2", "skill": name})
+        log.thread2("skill_building", f"Improved skill: {name}")
+        return thoughts
+
+    def _is_duplicate_skill(self, new_name: str, new_desc: str) -> bool:
+        """Check if a proposed skill is too similar to existing ones."""
+        new_words = set(new_name.replace("-", " ").split() +
+                       new_desc.lower().split())
+        for existing in self.skills.skills.values():
+            existing_words = set(
+                existing.name.replace("-", " ").split() +
+                existing.description.lower().split()
+            )
+            overlap = len(new_words & existing_words)
+            total = len(new_words | existing_words)
+            if total > 0 and overlap / total > 0.5:
+                return True
+        return False
 
     # --- Skill testing ---
 
@@ -520,14 +612,117 @@ class ReflectionThread:
 
     # --- Proactive messaging phase ---
 
-    def _phase_proactive(self) -> list[str]:
-        """Decide whether to proactively message the user."""
+    def _phase_explore_system(self) -> list[str]:
+        """Explore the system using safe read-only shell commands."""
         m = self._m
         thoughts = []
         lang = get_lang()
+
+        self._emit(m["exploring"])
+
+        # Gather what we already know
+        sysinfo = self.computer.system_info()
+        sysinfo_str = "\n".join(f"  {k}: {v}" for k, v in sysinfo.items())
+
+        known = []
+        for entry in self.memory.short_term[-20:]:
+            if entry.category == "system_discovery":
+                known.append(entry.content[:100])
+        for block in self.memory.long_term[-10:]:
+            if block.category == "system_discovery":
+                known.append(block.summary[:100])
+        known_str = "\n".join(known) if known else "(first exploration)"
+
+        # Ask LLM to plan exploration
+        try:
+            self._llm.set_system_prompt(T2_SYSTEM[lang])
+            raw = self._llm.chat(
+                T2_EXPLORE_PLAN[lang].format(
+                    sysinfo=sysinfo_str,
+                    known_info=known_str,
+                ),
+                include_history=False,
+            )
+            plan = self._extract_json(raw)
+        except Exception as e:
+            return [m["llm_error"].format(e=e)]
+
+        if not plan or not plan.get("commands"):
+            return ["[T2] No exploration commands planned"]
+
+        findings = []
+        for item in plan["commands"][:5]:
+            cmd = item.get("cmd", "").strip()
+            purpose = item.get("purpose", "")
+            if not cmd:
+                continue
+
+            # Safety check: hardcoded blocklist first
+            if self._is_obviously_unsafe(cmd):
+                self._emit(m["explore_unsafe"].format(cmd=cmd))
+                thoughts.append(f"Skipped unsafe: {cmd}")
+                continue
+
+            # LLM safety check
+            try:
+                safety_raw = self._llm.chat(
+                    T2_SAFETY_CHECK[lang].format(command=cmd, purpose=purpose),
+                    include_history=False,
+                )
+                safety = self._extract_json(safety_raw)
+                if not safety or not safety.get("safe"):
+                    reason = safety.get("reason", "unknown") if safety else "no response"
+                    self._emit(m["explore_unsafe"].format(cmd=cmd))
+                    thoughts.append(f"LLM rejected: {cmd} ({reason})")
+                    continue
+            except Exception:
+                continue
+
+            # Execute
+            self._emit(m["explore_cmd"].format(cmd=cmd, purpose=purpose))
+            result = self.computer.execute(cmd, timeout=15)
+            output = (result.get("stdout", "") or result.get("stderr", ""))[:300]
+
+            if result.get("returncode", 1) == 0 and output:
+                self._emit(m["explore_result"].format(result=output[:100]))
+                findings.append(f"{purpose}: {output[:150]}")
+                thoughts.append(f"Discovered ({purpose}): {output[:100]}")
+            else:
+                thoughts.append(f"Failed: {cmd}")
+
+        # Store discoveries in memory
+        if findings:
+            summary = "; ".join(findings)[:400]
+            self.memory.add(
+                f"System exploration: {summary}",
+                category="system_discovery", importance=0.6,
+                metadata={"source": "thread2", "type": "exploration"},
+            )
+            self._emit(m["explore_summary"].format(findings=summary[:150]))
+            log.thread2("system_exploration", f"Found: {summary[:200]}")
+
+        return thoughts
+
+    @staticmethod
+    def _is_obviously_unsafe(cmd: str) -> bool:
+        """Hardcoded blocklist for obviously destructive commands."""
+        dangerous = [
+            "rm ", "rm\t", "rmdir", "mkfs", "dd ", "format",
+            "sudo", "su ", "chmod -R", "chown -R",
+            "> /", ">> /", "tee /",
+            "shutdown", "reboot", "halt", "poweroff",
+            "kill -9", "killall", "pkill",
+            ":(){", "fork", ":(){ :|:&",
+        ]
+        cl = cmd.lower().strip()
+        return any(d in cl for d in dangerous)
+
+    def _try_proactive(self):
+        """Decide whether to proactively message the user. Called periodically."""
+        m = self._m
+        lang = get_lang()
         ctx = self._build_context()
 
-        # Calculate idle time
         last_interaction = 0
         for entry in reversed(self.memory.short_term):
             if entry.metadata.get("type") == "user_input":
@@ -536,9 +731,8 @@ class ReflectionThread:
         idle_secs = time.time() - last_interaction if last_interaction else 9999
         idle_str = f"{int(idle_secs // 60)}m" if idle_secs < 3600 else f"{idle_secs // 3600:.1f}h"
 
-        # Don't spam — only message every few cycles
-        if self._cycle_count % 3 != 0 and idle_secs < 300:
-            return ["[T2] Too soon for proactive message"]
+        if idle_secs < 300:
+            return
 
         try:
             self._llm.set_system_prompt(T2_SYSTEM[lang])
@@ -552,20 +746,13 @@ class ReflectionThread:
                 include_history=False,
             )
             parsed = self._extract_json(raw)
-        except Exception as e:
-            return [m["llm_error"].format(e=e)]
+        except Exception:
+            return
 
         if parsed and parsed.get("should_message") and parsed.get("message"):
             msg_text = parsed["message"]
-            reason = parsed.get("reason", "")
-            self._emit(f"[T2] Proactive: {reason[:100]}")
             self._emit_to_user(m["proactive_greeting"].format(message=msg_text))
-            thoughts.append(f"Sent proactive message: {msg_text[:100]}")
             log.thread2("proactive", f"Sent: {msg_text[:200]}")
-        else:
-            thoughts.append("[T2] No proactive message needed")
-
-        return thoughts
 
     def _rule_based(self, phase):
         thoughts = []

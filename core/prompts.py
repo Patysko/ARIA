@@ -231,63 +231,77 @@ RULES:
 }
 
 T2_BUILD = {
-    "pl": """Stworz nowa umiejetnosc (skill) dla agenta ARIA.
+    "pl": """Twoim zadaniem jest ULEPSZENIE istniejacego skilla LUB stworzenie nowego.
 
-Obecne umiejetnosci: {skills_list}
+## Obecne umiejetnosci (z kodem):
+{skills_list}
 
-Ostatnie interakcje uzytkownika:
+{skills_detail}
+
+## Ostatnie interakcje uzytkownika:
 {recent_interactions}
 
-Poprzednie wnioski:
+## Poprzednie wnioski:
 {previous_thoughts}
 
-Wymagania:
-1. Skill PRAKTYCZNY i LEKKI (bez GPU, bez transformers/pytorch/tensorflow)
-2. Skrypt MUSI dzialac BEZ argumentow (sensowne domyslne)
-3. Opcjonalnie przyjmuje argumenty przez sys.argv
-4. Tylko lekkie pip (requests, psutil, beautifulsoup4 itp.)
-5. NIE twórz skilla ktory juz istnieje
+## WAZNE ZASADY:
+1. NAJPIERW sprawdz czy istniejacy skill mozna ULEPSZYC zamiast tworzyc nowy
+2. NIGDY nie twórz skilla ktory robi to samo co istniejacy (nawet pod inna nazwa)
+3. Jesli ulepszasz: action="improve", podaj name istniejacego skilla i nowy kod
+4. Jesli tworzysz nowy: action="create", upewnij sie ze to NOWA funkcjonalnosc
+5. Skill PRAKTYCZNY i LEKKI (bez GPU, bez transformers/pytorch)
+6. Skrypt MUSI dzialac BEZ argumentow (sensowne domyslne)
+7. Tylko lekkie pip (requests, psutil, beautifulsoup4 itp.)
 
 Odpowiedz TYLKO JSON:
 ```json
 {{
+    "action": "create|improve",
     "name": "kebab-case-nazwa",
     "description": "Kiedy uzywac (krotko)",
     "instructions": "Co skill robi",
     "script_name": "main.py",
     "script_code": "#!/usr/bin/env python3\\nimport sys\\nprint('wynik')",
     "pip_packages": [],
-    "test_args": []
+    "test_args": [],
+    "reason": "Dlaczego to ulepszenie/nowy skill"
 }}
 ```""",
 
-    "en": """Create a new skill for ARIA agent.
+    "en": """Your task is to IMPROVE an existing skill OR create a new one.
 
-Current skills: {skills_list}
+## Current skills (with code):
+{skills_list}
 
-Recent user interactions:
+{skills_detail}
+
+## Recent user interactions:
 {recent_interactions}
 
-Previous conclusions:
+## Previous conclusions:
 {previous_thoughts}
 
-Requirements:
-1. Skill must be PRACTICAL and LIGHTWEIGHT (no GPU, no transformers/pytorch/tensorflow)
-2. Script MUST work WITHOUT arguments (sensible defaults)
-3. Optionally accepts arguments via sys.argv
-4. Only lightweight pip packages (requests, psutil, beautifulsoup4 etc.)
-5. Do NOT create a skill that already exists
+## IMPORTANT RULES:
+1. FIRST check if an existing skill can be IMPROVED instead of creating new
+2. NEVER create a skill that does the same as an existing one (even under a different name)
+3. If improving: action="improve", use name of existing skill and new code
+4. If creating new: action="create", ensure it's truly NEW functionality
+5. Skill must be PRACTICAL and LIGHTWEIGHT (no GPU, no transformers/pytorch)
+6. Script MUST work WITHOUT arguments (sensible defaults)
+7. Only lightweight pip packages (requests, psutil, beautifulsoup4 etc.)
 
 Respond ONLY with JSON:
 ```json
 {{
+    "action": "create|improve",
     "name": "kebab-case-name",
     "description": "When to use (briefly)",
     "instructions": "What the skill does",
     "script_name": "main.py",
     "script_code": "#!/usr/bin/env python3\\nimport sys\\nprint('result')",
     "pip_packages": [],
-    "test_args": []
+    "test_args": [],
+    "reason": "Why this improvement/new skill"
 }}
 ```""",
 }
@@ -372,22 +386,24 @@ T2_PHASE_INSTRUCTIONS = {
     "pl": {
         "introspection": "Przeanalizuj obecny stan. Co dzialalo dobrze? Co wymaga poprawy?",
         "pattern_analysis": "Jakie wzorce widzisz w interakcjach? Co uzytkownik robi najczesciej?",
-        "skill_planning": "Jakie LEKKIE, PRAKTYCZNE umiejetnosci stworzyc? Podaj 2-3 propozycje.",
+        "skill_planning": "Jakie LEKKIE, PRAKTYCZNE umiejetnosci stworzyc LUB ulepszic? Podaj 2-3 propozycje. Preferuj ulepszanie istniejacych.",
         "skill_building": "HANDLED SEPARATELY",
         "skill_testing": "HANDLED SEPARATELY",
         "self_improvement": "Co moge robic lepiej? Ocen jakosc odpowiedzi.",
         "knowledge_synthesis": "Polacz informacje z pamieci. Co wiem o uzytkowniku?",
         "exploration": "Zadaj sobie 3 pytania o przydatnosc i odpowiedz na nie.",
+        "system_exploration": "HANDLED SEPARATELY",
     },
     "en": {
         "introspection": "Analyze current state. What worked well? What needs improvement?",
         "pattern_analysis": "What patterns do you see in interactions? What does the user do most often?",
-        "skill_planning": "What LIGHTWEIGHT, PRACTICAL skills to create? Give 2-3 proposals.",
+        "skill_planning": "What LIGHTWEIGHT, PRACTICAL skills to create OR improve? Give 2-3 proposals. Prefer improving existing skills.",
         "skill_building": "HANDLED SEPARATELY",
         "skill_testing": "HANDLED SEPARATELY",
         "self_improvement": "What can I do better? Evaluate response quality.",
         "knowledge_synthesis": "Connect information from memory. What do I know about the user?",
         "exploration": "Ask yourself 3 questions about being useful and answer them.",
+        "system_exploration": "HANDLED SEPARATELY",
     },
 }
 
@@ -434,6 +450,13 @@ T2_MSG = {
         "task_failed": "[T2] Nie udalo sie wykonac zadania: {reason}",
         "proactive_greeting": "{message}",
         "errors_cleared": "[T2] Wyczyszczono log bledow po naprawie: {name}",
+        "improving": "[T2] Ulepszam skill: {name}...",
+        "improved": "Ulepszylem umiejetnosc: **{name}** -- {reason}",
+        "exploring": "[T2] Eksploruję system...",
+        "explore_cmd": "[T2] Wykonuję: {cmd} ({purpose})",
+        "explore_unsafe": "[T2] Komenda niebezpieczna, pomijam: {cmd}",
+        "explore_result": "[T2] Wynik: {result}",
+        "explore_summary": "[T2] Odkrycia: {findings}",
     },
     "en": {
         "cycle": "--- Cycle {n} | {phase} ---",
@@ -472,6 +495,13 @@ T2_MSG = {
         "task_failed": "[T2] Failed to complete task: {reason}",
         "proactive_greeting": "{message}",
         "errors_cleared": "[T2] Cleared error log after fix: {name}",
+        "improving": "[T2] Improving skill: {name}...",
+        "improved": "Improved skill: **{name}** -- {reason}",
+        "exploring": "[T2] Exploring system...",
+        "explore_cmd": "[T2] Running: {cmd} ({purpose})",
+        "explore_unsafe": "[T2] Unsafe command, skipping: {cmd}",
+        "explore_result": "[T2] Result: {result}",
+        "explore_summary": "[T2] Discoveries: {findings}",
     },
 }
 
@@ -783,4 +813,93 @@ MEM = {
         "recent_label": "--- Recent important memories ---",
         "memory_stats": "Memory: {st} short-term, {lt} compressed, {ep} episodic",
     },
+}
+
+
+# ============================================================
+#  SYSTEM EXPLORATION PROMPTS
+# ============================================================
+
+T2_EXPLORE_PLAN = {
+    "pl": """Jestes Thread 2 agenta ARIA. Zaplanuj eksploracje systemu.
+
+Informacje o systemie:
+{sysinfo}
+
+Co juz wiesz o systemie:
+{known_info}
+
+Zaplanuj 3-5 bezpiecznych komend shell do poznania srodowiska.
+Komendy MUSZA byc READ-ONLY (nie modyfikowac niczego).
+
+Odpowiedz TYLKO JSON:
+```json
+{{
+    "commands": [
+        {{"cmd": "uname -a", "purpose": "wersja systemu"}},
+        {{"cmd": "df -h", "purpose": "wolne miejsce"}}
+    ]
+}}
+```""",
+
+    "en": """You are Thread 2 of ARIA agent. Plan system exploration.
+
+System info:
+{sysinfo}
+
+What you already know:
+{known_info}
+
+Plan 3-5 safe shell commands to explore the environment.
+Commands MUST be READ-ONLY (do not modify anything).
+
+Respond ONLY with JSON:
+```json
+{{
+    "commands": [
+        {{"cmd": "uname -a", "purpose": "system version"}},
+        {{"cmd": "df -h", "purpose": "free space"}}
+    ]
+}}
+```""",
+}
+
+T2_SAFETY_CHECK = {
+    "pl": """Ocen bezpieczenstwo komendy shell.
+
+Komenda: {command}
+Cel: {purpose}
+
+Odpowiedz TYLKO JSON:
+```json
+{{"safe": true, "reason": "komenda read-only"}}
+```
+
+Komenda NIE jest bezpieczna jesli:
+- Modyfikuje pliki (rm, mv, cp, chmod, chown, tee, >)
+- Instaluje pakiety (apt, yum, pip install)
+- Zmienia konfiguracje systemu
+- Uruchamia procesy ktore moglyby uszkodzic system
+- Uzywa sudo/su
+- Wysyla dane na zewnatrz (curl POST, wget z upload)
+""",
+
+    "en": """Evaluate safety of a shell command.
+
+Command: {command}
+Purpose: {purpose}
+
+Respond ONLY with JSON:
+```json
+{{"safe": true, "reason": "read-only command"}}
+```
+
+Command is NOT safe if it:
+- Modifies files (rm, mv, cp, chmod, chown, tee, >)
+- Installs packages (apt, yum, pip install)
+- Changes system configuration
+- Runs processes that could harm the system
+- Uses sudo/su
+- Sends data externally (curl POST, wget with upload)
+""",
 }

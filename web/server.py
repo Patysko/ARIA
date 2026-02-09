@@ -67,6 +67,8 @@ class AriaWebAgent:
         status = self.llm.check_connection()
         self.llm_connected = status.get("connected", False)
         if self.llm_connected:
+            # Connect LLM to memory for smart compression summaries
+            self.memory.set_llm(self.reflection_llm)
             self.reflection.on_thought = self._broadcast_thought
             self.reflection.on_user_message = self._queue_user_message
             self.reflection.start_background(
